@@ -1,0 +1,12 @@
+{
+  "name": "cache-assistant",
+  "version": "0.1.0",
+  "description": "Understand and control your Claude Code prompt-cache window: a live tier + countdown statusline, cache-expiry and model/effort guards, a non-destructive statusline installer, and a tier-aware keep-cache-alive loop.",
+  "author": {
+    "name": "Henrik Schnettler"
+  },
+  "homepage": "https://github.com/HenrikSchnettler/cache-assistant",
+  "repository": "https://github.com/HenrikSchnettler/cache-assistant",
+  "license": "MIT",
+  "keywords": ["prompt-cache", "statusline", "hooks", "keep-alive", "cost"]
+}

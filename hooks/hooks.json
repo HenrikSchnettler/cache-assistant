@@ -1,0 +1,16 @@
+{
+  "description": "Cache Assistant guard: blocks the first send when the prompt-cache window has expired or when a model/effort switch would bust a warm cache. Re-send to confirm.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
