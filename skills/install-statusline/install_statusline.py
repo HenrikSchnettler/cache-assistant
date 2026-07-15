@@ -28,6 +28,17 @@ import time
 MARKER = "cache-assistant-statusline.sh"  # our wrapper filename / sentinel
 
 
+def installed_by_us(command):
+    """True if `command` is one we installed — either the wrapper (identified by
+    MARKER) or the direct `python3 '<plugin>/statusline/statusline.py'` form. Keys
+    off the stable intra-plugin suffix rather than the plugin dir name, so it stays
+    correct across version-dir changes and regardless of where the plugin lives.
+    Prevents a re-run from mistaking our own command for a user's original and
+    wrapping it."""
+    c = (command or "").replace("\\", "/")
+    return (MARKER in c) or ("statusline/statusline.py" in c)
+
+
 def resolve_our_statusline(explicit):
     if explicit:
         return os.path.abspath(explicit)
@@ -106,7 +117,7 @@ def main():
         print("Restored the original status line.")
         return 0
 
-    already_ours = isinstance(cur, dict) and MARKER in (cur.get("command") or "")
+    already_ours = isinstance(cur, dict) and installed_by_us(cur.get("command"))
 
     # Determine the "inner" (user's original) command to preserve.
     if already_ours:

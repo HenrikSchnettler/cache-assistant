@@ -53,6 +53,14 @@ check("1 model key preserved", cfg.get("model") == "opus")
 check("1 refreshInterval=1", cfg["statusLine"].get("refreshInterval") == 1, cfg["statusLine"])
 sl, out = run_statusline_command(p1)
 check("1 our cache row renders", "⚡ cache 1h" in out and "left" in out, out)
+# re-running after a fresh (direct) install must refresh in place, NOT wrap our own command
+install(p1)
+cfg1b = json.load(open(p1))
+check("1 re-run stays direct (not self-wrapped)",
+      "cache-assistant-statusline.sh" not in cfg1b["statusLine"]["command"]
+      and "statusline.py" in cfg1b["statusLine"]["command"], cfg1b["statusLine"]["command"])
+_, out1b = run_statusline_command(p1)
+check("1 re-run renders our row exactly once", out1b.count("⚡ cache 1h") == 1, repr(out1b))
 
 # ===== Case 2: merge into an EXISTING custom status line ====================
 print("\n-- Case 2: merge (preserve existing line) --")

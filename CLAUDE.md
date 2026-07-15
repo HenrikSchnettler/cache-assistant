@@ -1,8 +1,9 @@
 # CLAUDE.md — Cache Assistant
 
-Project context for working in this repo. The repo root is itself a **local
-Claude Code marketplace** (`.claude-plugin/marketplace.json`) hosting one plugin,
-`plugins/cache-assistant/`.
+Project context for working in this repo. The repo root **is** the plugin
+(`.claude-plugin/plugin.json`) — a single-plugin Claude Code repo installed as
+`cache-assistant`; hooks resolve scripts via `${CLAUDE_PLUGIN_ROOT}` (the repo
+root).
 
 The plugin makes a session's prompt-cache window visible (status line) and
 enforceable (guards + keep-alive). Everything derives from the session `.jsonl`
@@ -11,18 +12,20 @@ transcript; there are **no runtime dependencies** — stdlib Python 3 only.
 ## Layout
 
 ```
-plugins/cache-assistant/
-  lib/cache_core.py            # THE engine — shared by everything below
-  statusline/statusline.py     # status line row (tier + countdown); writes the model/effort sensor
-  statusline/cache_status.py   # /cache-status backing script
-  hooks/guard.py + hooks.json  # UserPromptSubmit guard (expiry + model/effort)
-  skills/install-statusline/   # install_statusline.py — non-destructive status line merge
-  skills/keep-cache-alive/     # keepalive.py — tier-aware warm-keeping loop
-  commands/cache-status.md
-tests/                         # test_core / test_guard / test_installer / test_keepalive
+.claude-plugin/plugin.json     # plugin manifest
+lib/cache_core.py              # THE engine — shared by everything below
+statusline/statusline.py       # status line row (tier + countdown); writes the model/effort sensor
+statusline/cache_status.py     # /cache-status backing script
+hooks/guard.py                 # UserPromptSubmit guard (expiry + model/effort); can block a send
+hooks/session_notice.py        # SessionStart notice: same expiry logic, warns the USER on resume (stderr+exit 2, never blocks)
+hooks/hooks.json               # registers both hooks (UserPromptSubmit + SessionStart)
+skills/install-statusline/     # install_statusline.py — non-destructive status line merge
+skills/keep-cache-alive/       # keepalive.py — tier-aware warm-keeping loop
+commands/cache-status.md
+tests/                         # test_core / test_guard / test_installer / test_keepalive / test_session_notice
 ```
 
-Run the tests with `python3 tests/test_*.py` (66 checks, no network, no deps).
+Run the tests with `python3 tests/test_*.py` (80 checks, no network, no deps).
 
 ## The cache model this is built on (ground truth)
 
@@ -51,7 +54,19 @@ Anthropic's docs. The code keys off exactly these facts:
   line** stdin (`model.id`, `effort.level`) — which is why `statusline.py` writes
   those to a per-session sensor file that `guard.py` reads (fallback:
   `settings.json`). The model/effort guard therefore needs the status line
-  installed to be fully effective.
+  installed to be fully effective. Docs confirm this is irreducible: there is
+  **no `$CLAUDE_MODEL` env var**, only `SessionStart` stdin carries `model` (not
+  guaranteed), and `effort`/`$CLAUDE_EFFORT` appear only on tool-context events
+  (`PreToolUse`/`PostToolUse`/`Stop`/`SubagentStop`) — never on `UserPromptSubmit`.
+- **Surface support.** Hooks run in the terminal CLI and in **desktop local
+  sessions**, so the expiry guard and the SessionStart notice (both
+  transcript-only) work on both. But the **desktop app does not execute custom
+  status lines** (the `statusLine` setting is silently ignored — Claude Code issue
+  [#41456](https://github.com/anthropics/claude-code/issues/41456)), so on desktop
+  the sensor is never written and the model/effort guard **degrades to its
+  `settings.json` fallback**: it still catches a *persisted* change (`/model`
+  saved as default) but not a session-only picker switch. Cloud/remote/WSL
+  sessions don't load plugins at all.
 - Multiple assistant `.jsonl` lines can share one `requestId` with **identical**
   usage (content blocks of one API response) — take the latest, never sum.
 
@@ -80,6 +95,19 @@ Cold-rewrite token estimate (shown by the status line and guards) =
   **never** blocks slash-commands, empty prompts, or keep-alive pings (marked with
   `cache_core.KEEPALIVE_MARKER`), and has a top-level safety net that **allows on
   any internal error** — it must never wrongly block a send.
+- **SessionStart companion (`hooks/session_notice.py`).** Same expiry detection
+  as the guard, but for the moment you *enter* a session (startup/resume/clear/
+  compact) rather than send. A SessionStart hook has no send to block; to warn the
+  **user** (not just Claude) it uses the one documented user-visible channel for
+  this event — **stderr + exit 2**. Per the hooks contract SessionStart "cannot
+  block", so exit 2 does *not* stop the session from starting, but its stderr is
+  shown to the user (rendered in the transcript since Claude Code v2.1.199). So
+  when the window has already **expired** it prints the cold-re-write warning and
+  exits 2; otherwise it exits 0 silently. This means the warning goes to the user,
+  *not* into Claude's context (the `additionalContext`/exit-0 path would be the
+  reverse). It's read-only w.r.t. the guard's `guard-<session>.json` state machine
+  and shares the guard's allow-on-error safety net (a SessionStart hook must never
+  break startup).
 - **Keep-alive.** Interval is re-derived from the *current* tier every cycle
   (5m→240s, 1h→3300s, each a margin below the TTL), so it adapts to a mid-loop
   tier switch. Pings via `claude --resume <session> -p "<marker> …"` replay the

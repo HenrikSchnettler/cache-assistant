@@ -1,5 +1,5 @@
 {
-  "description": "Cache Assistant guard: blocks the first send when the prompt-cache window has expired or when a model/effort switch would bust a warm cache. Re-send to confirm.",
+  "description": "Cache Assistant guards: on send, blocks the first message when the prompt-cache window has expired or a model/effort switch would bust a warm cache (re-send to confirm); on session start, shows the same cold-cache warning to the user when you resume a session whose window has expired.",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -7,6 +7,17 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/session_notice.py\"",
             "timeout": 10
           }
         ]
