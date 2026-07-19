@@ -27,8 +27,9 @@ re-write. Cache Assistant makes that window visible and gives you guardrails.
   Claude Code v2.1.199+ for the message to render.
 - **`install-statusline` skill** — adds the row to your status line
   **non-destructively**, wrapping any status line you already have.
-- **`keep-cache-alive` skill** — a tier-aware loop that pings the session to keep
-  the window warm while you're away, with a sensible ping cap.
+- **`keep-cache-alive` skill** — drives the built-in `/loop` command to send a
+  tiny, tier-aware ping into the session on a fixed interval, keeping the window
+  warm while you're away without any out-of-session daemon.
 - **`/cache-status` command** — an on-demand readout of tier, countdown, and cold
   re-cache cost.
 

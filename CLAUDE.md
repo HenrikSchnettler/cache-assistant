@@ -20,12 +20,12 @@ hooks/guard.py                 # UserPromptSubmit guard (expiry + model/effort);
 hooks/session_notice.py        # SessionStart notice: same expiry logic, warns the USER on resume (stderr+exit 2, never blocks)
 hooks/hooks.json               # registers both hooks (UserPromptSubmit + SessionStart)
 skills/install-statusline/     # install_statusline.py — non-destructive status line merge
-skills/keep-cache-alive/       # keepalive.py — tier-aware warm-keeping loop
+skills/keep-cache-alive/       # keepalive.py — tier→`/loop` planner (skill drives the built-in /loop)
 commands/cache-status.md
 tests/                         # test_core / test_guard / test_installer / test_keepalive / test_session_notice
 ```
 
-Run the tests with `python3 tests/test_*.py` (80 checks, no network, no deps).
+Run the tests with `python3 tests/test_*.py` (93 checks, no network, no deps).
 
 ## The cache model this is built on (ground truth)
 
@@ -108,12 +108,23 @@ Cold-rewrite token estimate (shown by the status line and guards) =
   reverse). It's read-only w.r.t. the guard's `guard-<session>.json` state machine
   and shares the guard's allow-on-error safety net (a SessionStart hook must never
   break startup).
-- **Keep-alive.** Interval is re-derived from the *current* tier every cycle
-  (5m→240s, 1h→3300s, each a margin below the TTL), so it adapts to a mid-loop
-  tier switch. Pings via `claude --resume <session> -p "<marker> …"` replay the
-  prefix → cache hit → TTL slides forward. Default **max 12 pings** (community
-  break-even: ~a dozen keep-alives cost about one cold re-write; also runaway
-  protection). Ctrl-C stops cleanly.
+- **Keep-alive.** The skill drives the **built-in `/loop`** command — it stays
+  *in-session*, so a ping is just a normal user turn that replays the cached
+  prefix → cache hit → TTL slides forward. No daemon, no `claude --resume`, no
+  self-referential resume of the current session (the earlier out-of-session
+  daemon design was the layer mismatch this replaced). `keepalive.py` is now a
+  small **planner**: it detects the current tier and prints the matching `/loop`
+  command. `/loop` schedules on a **cron** backend, so the intervals are chosen
+  cron-safe — a whole number of minutes dividing 60, short enough that cron's
+  ≤10% fire-late jitter still lands before the TTL: 5m→`/loop 4m` = 240s,
+  1h→`/loop 30m` = 1800s. (55m/3300s, the old daemon value, is *not* cron-safe —
+  it rounds to 60m = the TTL, or fires unevenly — so the 1h tier uses 30m;
+  `tests/test_keepalive.py` enforces this invariant over every tier.) The ping
+  carries `cache_core.KEEPALIVE_MARKER` so `guard.py` never blocks it. `/loop`
+  runs until the user stops it — and only while this session and machine are
+  alive, and it can't adapt if the tier drops mid-session (both caveated in the
+  SKILL). The planner surfaces the community break-even (~a dozen pings ≈ one
+  cold re-write) as guidance rather than a hard cap.
 - **Paths.** Hooks reference scripts via `${CLAUDE_PLUGIN_ROOT}`. The installer
   bakes an absolute path to `statusline.py` into settings and sets
   `refreshInterval: 1` (needed for the 1-second countdown); when a status line

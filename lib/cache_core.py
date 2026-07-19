@@ -36,11 +36,18 @@ import time
 TIER_TTL = {"5m": 300, "1h": 3600}
 TIER_LABEL = {"5m": "5m", "1h": "1h"}
 
-# Keep-alive ping recommendations per tier (seconds). Each sits a safety margin
-# below the tier TTL so a ping always lands before the window closes:
-#   5m TTL (300s) -> ping every 240s (60s margin)
-#   1h TTL (3600s) -> ping every 3300s (300s margin)
-TIER_PING_INTERVAL = {"5m": 240, "1h": 3300}
+# Keep-alive ping intervals per tier (seconds). The keep-cache-alive skill feeds
+# these to the built-in `/loop` command, which schedules them as CRON jobs — so
+# every value here MUST be cron-safe: a whole number of minutes that divides 60
+# evenly (even gaps, no `*/N` wrap-around), and short enough that even cron's
+# up-to-10% "fire late" jitter still lands before the TTL closes.
+#   5m TTL (300s)  -> ping every 240s  == /loop 4m  (*/4;  <=264s with jitter < 300s)
+#   1h TTL (3600s) -> ping every 1800s == /loop 30m (*/30; <=1980s with jitter < 3600s)
+# NB: the old daemon used 3300s (55m). Cron cannot represent 55m safely — it
+# either rounds to 60m (== the TTL, zero margin) or emits an uneven */55 whose
+# jitter can push a ping past the TTL — so the 1h tier uses 1800s (30m) instead.
+# The test suite enforces this invariant (see tests/test_keepalive.py).
+TIER_PING_INTERVAL = {"5m": 240, "1h": 1800}
 
 # Prompts carrying this marker are keep-alive pings; the guard hook never blocks
 # them. Single source of truth, imported by the hook and the keep-alive loop.
