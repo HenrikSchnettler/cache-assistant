@@ -30,6 +30,11 @@ def assistant(epoch, tier, read=25000, create=9000, inp=4):
             "message":{"model":"claude-opus-4-8","usage":{"input_tokens":inp,"output_tokens":9,
             "cache_read_input_tokens":read,"cache_creation_input_tokens":create,"cache_creation":cc}}}
 
+def compact_boundary(epoch):
+    # Shape of the line Claude Code appends on /compact or auto-compact.
+    return {"type":"system","subtype":"compact_boundary","content":"Conversation compacted",
+            "timestamp":iso(epoch),"compactMetadata":{"trigger":"manual","preTokens":34004}}
+
 def new_tx(name):
     p = os.path.join(WORK, name+".jsonl")
     open(p, "w").close()
@@ -88,6 +93,14 @@ sess="E"
 rc, err, out = run(sess, os.path.join(WORK, "does-not-exist.jsonl"))
 check("E1 exits 0 (no crash, not a scary exit 2)", rc == 0, (rc, err))
 check("E1 silent with no transcript", not err.strip(), err)
+
+# ============ Scenario F: SessionStart(compact) after expiry -> silent =====
+print("\n-- Scenario F: compact after the window expired --")
+sess="F"; tx=new_tx("F")
+append(tx, assistant(time.time()-4000, "1h"))
+append(tx, compact_boundary(time.time()-5))
+rc, err, out = run(sess, tx, source="compact")
+check("F1 no stale EXPIRED warning after compact", rc == 0 and not err.strip(), (rc, err))
 
 print("\n%d failures" % len(fails))
 shutil.rmtree(STATE, ignore_errors=True); shutil.rmtree(WORK, ignore_errors=True)

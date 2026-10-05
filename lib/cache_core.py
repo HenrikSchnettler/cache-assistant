@@ -129,7 +129,22 @@ def _scan_assistant_line(obj, acc):
     lines can share one requestId (content blocks of a single API response and
     thus a single cache access) with identical usage; taking the latest such
     line is correct and never double counts.
+
+    A compaction (`/compact` or auto-compact) appends a `system` line with
+    subtype `compact_boundary`, followed by a `user` line flagged
+    `isCompactSummary` (either one resets, so a version that only writes one of
+    them is still caught). Everything before it is replaced by a summary,
+    so the old cached prefix (and its expiry) no longer describes what the next
+    request will send. The anchor is reset: until the next cache-touching turn
+    there is "no data" (status line shows warming, guards stay quiet), instead
+    of a stale EXPIRED from the pre-compact window.
     """
+    if (obj.get("type") == "system" and obj.get("subtype") == "compact_boundary") \
+            or obj.get("isCompactSummary"):
+        acc["anchor_epoch"] = None
+        acc["rewrite_tokens"] = None
+        acc["last_request_id"] = None
+        return
     if obj.get("type") != "assistant":
         return
     msg = obj.get("message") or {}
@@ -209,8 +224,10 @@ def get_cache_state(transcript_path, session_id, now=None):
     same_file = (cache.get("path_key") == transcript_path
                  and cache.get("inode") == inode)
 
-    if same_file and cache.get("size") == size and cache.get("anchor_epoch"):
-        # FAST PATH: nothing appended since last call. Reuse memoised anchor.
+    if same_file and cache.get("size") == size and "consumed" in cache:
+        # FAST PATH: nothing appended since last call. Reuse the memo as-is --
+        # including a memo with no anchor yet (new session, or right after a
+        # compaction), which would otherwise re-read and re-save every tick.
         acc = _acc_from_cache(cache)
         result["path"] = "fast"
     else:

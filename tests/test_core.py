@@ -104,6 +104,26 @@ per_call_us = elapsed / N * 1e6
 print("  in-process per-call (fast path): %.1f us  (%.4fs for %d calls)" % (per_call_us, elapsed, N))
 check("fast path < 200us/call in-process", per_call_us < 200, per_call_us)
 
+# --- COMPACTION: boundary / summary reset the anchor; idle after it stays fast
+def compact_case(name, line):
+    path = os.path.join(WORK, name + ".jsonl")
+    with open(path, "w") as fh:
+        fh.write(json.dumps(assistant(t0 - 4000, "1h", rid="r_" + name)) + "\n")
+        fh.write(json.dumps(line) + "\n")
+    r = cache_core.get_cache_state(path, name, now=t0)
+    check(name + ": no stale anchor after compact", r["have_data"] is False and r["expired"] is None, r)
+    r2 = cache_core.get_cache_state(path, name, now=t0 + 1)
+    check(name + ": idle tick after compact is fast", r2["path"] == "fast", r2["path"])
+    with open(path, "a") as fh:
+        fh.write(json.dumps(assistant(t0, "1h", rid="r2_" + name)) + "\n")
+    r3 = cache_core.get_cache_state(path, name, now=t0 + 2)
+    check(name + ": next turn re-anchors (warm)", r3["have_data"] and r3["expired"] is False, r3)
+
+compact_case("boundary", {"type": "system", "subtype": "compact_boundary",
+                          "content": "Conversation compacted", "timestamp": iso(t0 - 5)})
+compact_case("summary", {"type": "user", "isCompactSummary": True, "timestamp": iso(t0 - 5),
+                         "message": {"role": "user", "content": "summary"}})
+
 print("\n%d checks, %d failures" % (0, len(fails)))
 shutil.rmtree(STATE, ignore_errors=True)
 shutil.rmtree(WORK, ignore_errors=True)

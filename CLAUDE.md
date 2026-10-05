@@ -25,7 +25,7 @@ commands/cache-status.md
 tests/                         # test_core / test_guard / test_installer / test_keepalive / test_session_notice
 ```
 
-Run the tests with `python3 tests/test_*.py` (93 checks, no network, no deps).
+Run the tests with `python3 tests/test_*.py` (104 checks, no network, no deps).
 
 ## The cache model this is built on (ground truth)
 
@@ -67,6 +67,14 @@ Anthropic's docs. The code keys off exactly these facts:
   `settings.json` fallback**: it still catches a *persisted* change (`/model`
   saved as default) but not a session-only picker switch. Cloud/remote/WSL
   sessions don't load plugins at all.
+- **Compaction resets the anchor.** `/compact` and auto-compact append a
+  `{"type":"system","subtype":"compact_boundary"}` line (then a user line with
+  `isCompactSummary: true`; either one resets); the summarisation
+  request itself is *not* logged as an assistant turn with usage (confirmed on a
+  real transcript, Claude Code 2.1.214: only user/attachment/meta lines follow the
+  boundary until the next prompt). The pre-compact
+  prefix is gone, so its (possibly expired) window must not drive the guards:
+  the boundary clears the anchor → "no data" until the next cache-touching turn.
 - Multiple assistant `.jsonl` lines can share one `requestId` with **identical**
   usage (content blocks of one API response) — take the latest, never sum.
 
