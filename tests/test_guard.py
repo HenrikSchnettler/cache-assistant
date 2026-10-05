@@ -32,6 +32,11 @@ def assistant(epoch, tier, read=25000, create=9000, inp=4):
             "message":{"model":"claude-opus-4-8","usage":{"input_tokens":inp,"output_tokens":9,
             "cache_read_input_tokens":read,"cache_creation_input_tokens":create,"cache_creation":cc}}}
 
+def compact_boundary(epoch):
+    # Shape of the line Claude Code appends on /compact or auto-compact.
+    return {"type":"system","subtype":"compact_boundary","content":"Conversation compacted",
+            "timestamp":iso(epoch),"compactMetadata":{"trigger":"manual","preTokens":34004}}
+
 def new_tx(name):
     p = os.path.join(WORK, name+".jsonl")
     open(p, "w").close()
@@ -119,6 +124,23 @@ sys.path.insert(0, os.path.join(PLUGIN, "hooks"))
 import guard as guardmod
 check("E2 keepalive ping allowed", not is_block(run(sess, tx, "hi "+guardmod.KEEPALIVE_MARKER)))
 check("E3 empty prompt allowed", not is_block(run(sess, tx, "   ")))
+
+# ============ Scenario F: compact after expiry =============================
+print("\n-- Scenario F: compact after the window expired --")
+sess="F"; tx=new_tx("F")
+append(tx, assistant(time.time()-4000, "1h"))     # expired...
+cache_core.write_settings_state(sess, "opus", "high")
+check("F0 expired before compact (blocks)", is_block(run(sess, tx, "before compact")))
+append(tx, compact_boundary(time.time()-10))      # ...then the user compacts
+o1 = run(sess, tx, "first message after compact")
+check("F1 first send after compact NOT blocked", not is_block(o1), o1)
+append(tx, assistant(time.time(), "1h"))          # that turn caches the new prefix
+check("F2 next send allowed", not is_block(run(sess, tx, "second message")))
+# Expiry still works after a compact once a new window has run out.
+sess="F3"; tx=new_tx("F3")
+append(tx, compact_boundary(time.time()-9000))
+append(tx, assistant(time.time()-4000, "1h"))
+check("F3 post-compact window that expired still blocks", is_block(run(sess, tx, "late")))
 
 print("\n%d failures" % len(fails))
 shutil.rmtree(STATE, ignore_errors=True); shutil.rmtree(WORK, ignore_errors=True)
