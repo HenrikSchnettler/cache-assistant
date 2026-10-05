@@ -130,6 +130,12 @@ def _scan_assistant_line(obj, acc):
     thus a single cache access) with identical usage; taking the latest such
     line is correct and never double counts.
     """
+    if (obj.get("type") == "system" and obj.get("subtype") == "compact_boundary") \
+            or obj.get("isCompactSummary"):
+        acc["anchor_epoch"] = None
+        acc["rewrite_tokens"] = None
+        acc["last_request_id"] = None
+        return
     if obj.get("type") != "assistant":
         return
     msg = obj.get("message") or {}
@@ -209,7 +215,7 @@ def get_cache_state(transcript_path, session_id, now=None):
     same_file = (cache.get("path_key") == transcript_path
                  and cache.get("inode") == inode)
 
-    if same_file and cache.get("size") == size and cache.get("anchor_epoch"):
+    if same_file and cache.get("size") == size and "consumed" in cache:
         # FAST PATH: nothing appended since last call. Reuse memoised anchor.
         acc = _acc_from_cache(cache)
         result["path"] = "fast"
