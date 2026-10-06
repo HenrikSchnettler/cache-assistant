@@ -1,12 +1,33 @@
 {
   "name": "cache-assistant",
   "version": "0.1.3",
-  "description": "Understand and control your Claude Code prompt-cache window: a live tier + countdown statusline, cache-expiry and model/effort guards, a non-destructive statusline installer, and a tier-aware keep-cache-alive loop.",
+  "description": "Understand and control your Claude Code prompt-cache window: a live band above the prompt (tier, countdown, advice, one-press keep-alive), cache-expiry and model-switch guards that only interrupt for large re-writes, a statusline, and a tier-aware keep-alive.",
   "author": {
     "name": "Henrik Schnettler"
   },
   "homepage": "https://github.com/HenrikSchnettler/cache-assistant",
   "repository": "https://github.com/HenrikSchnettler/cache-assistant",
   "license": "MIT",
-  "keywords": ["prompt-cache", "statusline", "hooks", "keep-alive", "cost"]
+  "keywords": [
+    "prompt-cache",
+    "statusline",
+    "hooks",
+    "keep-alive",
+    "cost"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "block_threshold_tokens": {
+      "type": "number",
+      "title": "Large re-write threshold (tokens)",
+      "description": "A cold cache re-write of at least this many tokens counts as large: the guards block the first send once and the band advises against just continuing. Below it nothing blocks and the band says to keep going. 0 always blocks.",
+      "default": 50000
+    },
+    "keepalive_max_pings": {
+      "type": "number",
+      "title": "Keep-alive ping limit",
+      "description": "The band's keep-alive switches itself off after this many pings without a message from you (about a dozen pings cost one cold re-write).",
+      "default": 12
+    }
+  }
 }

@@ -124,6 +124,66 @@ compact_case("boundary", {"type": "system", "subtype": "compact_boundary",
 compact_case("summary", {"type": "user", "isCompactSummary": True, "timestamp": iso(t0 - 5),
                          "message": {"role": "user", "content": "summary"}})
 
+# --- Unexpected cache miss + keep-alive touch + threshold --------------------
+def fresh(name):
+    path = os.path.join(WORK, name + ".jsonl")
+    open(path, "w").close()
+    return path
+def add(path, obj):
+    with open(path, "a") as fh:
+        fh.write(json.dumps(obj) + "\n")
+
+p_miss = fresh("miss")
+add(p_miss, assistant(t0, "1h", read=60000, create=2000, rid="m1"))
+add(p_miss, assistant(t0 + 60, "1h", read=61000, create=900, rid="m2"))
+r = cache_core.get_cache_state(p_miss, "miss", now=t0 + 61)
+check("miss: a normal warm hit is no miss", r["miss"] is None, r["miss"])
+busted = assistant(t0 + 120, "1h", read=0, create=63000, rid="m3")
+busted["message"]["model"] = "claude-sonnet-5-5"
+add(p_miss, busted)
+r = cache_core.get_cache_state(p_miss, "miss", now=t0 + 121)
+check("miss: read 0 inside the window is flagged", bool(r["miss"]), r)
+check("miss: carries expected vs read", r["miss"]["expected_tokens"] == 61903
+      and r["miss"]["read_tokens"] == 0, r["miss"])
+check("miss: attributes a model change", r["miss"]["model_changed"] is True, r["miss"])
+check("miss: model reported", r["model"] == "claude-sonnet-5-5", r["model"])
+
+p_exp = fresh("expd")
+add(p_exp, assistant(t0, "5m", read=60000, create=2000, rid="e1"))
+add(p_exp, assistant(t0 + 900, "5m", read=0, create=62000, rid="e2"))
+r = cache_core.get_cache_state(p_exp, "expd", now=t0 + 901)
+check("miss: a re-write after the window lapsed is NOT a miss", r["miss"] is None, r["miss"])
+
+p_same = fresh("same")
+add(p_same, assistant(t0, "1h", read=60000, create=2000, rid="s1"))
+add(p_same, assistant(t0 + 1, "1h", read=60000, create=2000, rid="s1"))
+r = cache_core.get_cache_state(p_same, "same", now=t0 + 2)
+check("miss: blocks of one request never flag", r["miss"] is None, r["miss"])
+
+p_touch = fresh("touch")
+add(p_touch, assistant(t0, "5m", rid="t1"))
+r = cache_core.get_cache_state(p_touch, "touch", now=t0 + 400)
+check("touch: expired without a ping", r["expired"] is True, r)
+cache_core.record_touch("touch", now=t0 + 240)
+r = cache_core.get_cache_state(p_touch, "touch", now=t0 + 400)
+check("touch: a keep-alive hit slides the window", r["expired"] is False
+      and abs(r["remaining_seconds"] - 140) < 0.01, r)
+check("touch: fast path still used", r["path"] == "fast", r["path"])
+add(p_touch, assistant(t0 + 500, "5m", rid="t2"))
+r = cache_core.get_cache_state(p_touch, "touch", now=t0 + 501)
+check("touch: a newer turn wins over an older touch", r["anchor_epoch"] == t0 + 500, r)
+
+os.environ.pop("CLAUDE_PLUGIN_OPTION_BLOCK_THRESHOLD_TOKENS", None)
+check("threshold: default", cache_core.block_threshold() == cache_core.DEFAULT_BLOCK_THRESHOLD)
+check("threshold: below is small", not cache_core.is_large(cache_core.DEFAULT_BLOCK_THRESHOLD - 1))
+check("threshold: at is large", cache_core.is_large(cache_core.DEFAULT_BLOCK_THRESHOLD))
+check("threshold: unknown size is large", cache_core.is_large(None))
+os.environ["CLAUDE_PLUGIN_OPTION_BLOCK_THRESHOLD_TOKENS"] = "1234"
+check("threshold: plugin option wins", cache_core.block_threshold() == 1234)
+os.environ["CLAUDE_PLUGIN_OPTION_BLOCK_THRESHOLD_TOKENS"] = "nonsense"
+check("threshold: garbage falls back", cache_core.block_threshold() == cache_core.DEFAULT_BLOCK_THRESHOLD)
+os.environ.pop("CLAUDE_PLUGIN_OPTION_BLOCK_THRESHOLD_TOKENS", None)
+
 print("\n%d checks, %d failures" % (0, len(fails)))
 shutil.rmtree(STATE, ignore_errors=True)
 shutil.rmtree(WORK, ignore_errors=True)

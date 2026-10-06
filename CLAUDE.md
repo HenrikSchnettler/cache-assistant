@@ -18,7 +18,11 @@ statusline/statusline.py       # status line row (tier + countdown); writes the 
 statusline/cache_status.py     # /cache-status backing script
 hooks/guard.py                 # UserPromptSubmit guard (expiry + model/effort); can block a send
 hooks/session_notice.py        # SessionStart notice: same expiry logic, warns the USER on resume (stderr+exit 2, never blocks)
-hooks/hooks.json               # registers both hooks (UserPromptSubmit + SessionStart)
+hooks/model_switch.py          # PreModelSwitch (ask on a warm, large cache) / PostModelSwitch (record for guard.py)
+hooks/register.tsx             # the mod: band above the prompt (function hooks module), keep-alive, notices
+hooks/advice.ts                # the band's formatting + advice, pure functions
+hooks/hooks.json               # registers the command hooks and the module ("modules")
+types/index.d.ts               # the mod's $.state contract
 skills/install-statusline/     # install_statusline.py — non-destructive status line merge
 skills/keep-cache-alive/       # keepalive.py — tier→`/loop` planner (skill drives the built-in /loop)
 commands/cache-status.md
@@ -138,6 +142,39 @@ Cold-rewrite token estimate (shown by the status line and guards) =
   `refreshInterval: 1` (needed for the 1-second countdown); when a status line
   already exists it generates a wrapper that runs the original first, then our
   row, and saves the original for `--restore`. Re-running is idempotent.
+
+- **Threshold (`cache_core.block_threshold` / `is_large`).** One value decides
+  "small vs large" everywhere: the `block_threshold_tokens` plugin option
+  (default 50,000), which reaches command hooks as
+  `CLAUDE_PLUGIN_OPTION_BLOCK_THRESHOLD_TOKENS` and the mod as `options`. Below it
+  no guard blocks or warns and the band advises to keep going. An unknown size
+  counts as large.
+- **Model switches (`hooks/model_switch.py`).** Claude Code >= 2.1.288 raises
+  `PreModelSwitch`/`PostModelSwitch` with `prompt_cache_warm`, `context_tokens`
+  and `cache_ttl`: the live signal the status-line sensor only approximated.
+  Pre answers `ask` for a hand-made switch (`command`/`picker`) on a warm, large
+  cache; Post records `switch` in `guard-<session>.json`. `guard.py` consumes it:
+  confirmed at the prompt means no second block, unconfirmed (`sdk`, `auto`)
+  blocks the first send once, and switching back to the original model clears
+  it. The sensor path remains for effort and for older versions.
+- **The mod (`hooks/register.tsx`).** A function-hooks module drawing the
+  `AbovePrompt` band. It does not re-derive the window: it runs
+  `cache_status.py --json` at session start, after each main-loop turn, after a
+  compaction and after a keep-alive ping, and counts down from the anchor in
+  between (a 1 s timer that writes state only when the drawn label changes). `$`
+  may only be passed to functions declared at the top of the module, which is why
+  the helpers are module-level. Its keep-alive uses `$.model.fork`: the main
+  thread's last request again with one line after it, so the prefix is read from
+  the cache and the window slides, with no turn added. Such a hit leaves no
+  transcript line, so the mod records it with `cache_status.py --touch`
+  (`cache_core.record_touch`), which `get_cache_state` honours as the anchor when
+  newer; that keeps the guards and the status line in step.
+- **Unexpected miss (`_scan_assistant_line`).** A new request inside the open
+  window that read under half of the prefix the previous one left cached is
+  recorded as `miss` (with `model_changed`). The band reports it after the turn
+  together with any `config.set` keys changed since the last turn. This is the
+  catch-all for busts no event announces (tools, MCP servers, system prompt,
+  effort).
 
 ## Sources
 

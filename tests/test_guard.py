@@ -25,7 +25,7 @@ def iso(epoch):
     import datetime
     return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
-def assistant(epoch, tier, read=25000, create=9000, inp=4):
+def assistant(epoch, tier, read=85000, create=9000, inp=4):
     cc = {"ephemeral_5m_input_tokens": create if tier=="5m" else 0,
           "ephemeral_1h_input_tokens": create if tier=="1h" else 0}
     return {"type":"assistant","requestId":"req_%d"%int(epoch*1000),"timestamp":iso(epoch),
@@ -141,6 +141,85 @@ sess="F3"; tx=new_tx("F3")
 append(tx, compact_boundary(time.time()-9000))
 append(tx, assistant(time.time()-4000, "1h"))
 check("F3 post-compact window that expired still blocks", is_block(run(sess, tx, "late")))
+
+# ============ Scenario G: small re-write is never blocked ====================
+print("\n-- Scenario G: block threshold --")
+sess="G"; tx=new_tx("G")
+append(tx, assistant(time.time()-4000, "1h", read=9000, create=3000))   # expired, ~12k
+check("G1 expired but small: NOT blocked", not is_block(run(sess, tx, "carry on")))
+env["CLAUDE_PLUGIN_OPTION_BLOCK_THRESHOLD_TOKENS"] = "10000"
+check("G2 same session blocks once the threshold is lowered",
+      is_block(run(sess, tx, "carry on")))
+env["CLAUDE_PLUGIN_OPTION_BLOCK_THRESHOLD_TOKENS"] = "0"
+sess="G3"; tx=new_tx("G3")
+append(tx, assistant(time.time()-4000, "1h", read=10, create=5))
+check("G3 threshold 0 always blocks", is_block(run(sess, tx, "tiny")))
+del env["CLAUDE_PLUGIN_OPTION_BLOCK_THRESHOLD_TOKENS"]
+sess="G4"; tx=new_tx("G4")
+append(tx, assistant(time.time()-10, "1h", read=9000, create=3000))     # warm, small
+cache_core.write_settings_state(sess, "opus", "high")
+run(sess, tx, "baseline")
+cache_core.write_settings_state(sess, "sonnet", "high")
+check("G4 model change on a small warm cache NOT blocked",
+      not is_block(run(sess, tx, "after switch")))
+
+# ============ Scenario H: PreModelSwitch / PostModelSwitch hook ==============
+print("\n-- Scenario H: model-switch hook --")
+SWITCH = os.path.join(PLUGIN, "hooks", "model_switch.py")
+def switch(session, event, src, dst, source="command", warm=True, tokens=120000):
+    payload = json.dumps({"session_id":session,"hook_event_name":event,
+        "from_model":src,"to_model":dst,"requested_model":dst,"source":source,
+        "context_tokens":tokens,"prompt_cache_warm":warm,"cache_ttl":"1h",
+        "estimated_cache_write_usd":1.2,"pricing":"catalog"})
+    r = subprocess.run([sys.executable, SWITCH], input=payload, capture_output=True,
+                       text=True, env=env)
+    return json.loads(r.stdout) if r.stdout.strip() else {}
+def decision(o): return (o.get("hookSpecificOutput") or {}).get("permissionDecision")
+
+o = switch("H", "PreModelSwitch", "opus", "sonnet")
+check("H1 warm + large switch asks for confirmation", decision(o) == "ask", o)
+check("H1 reason names the re-cache size",
+      "120.0k" in o["hookSpecificOutput"]["permissionDecisionReason"], o)
+check("H2 cold cache switch passes silently",
+      switch("H", "PreModelSwitch", "opus", "sonnet", warm=False) == {})
+check("H3 small switch passes silently",
+      switch("H", "PreModelSwitch", "opus", "sonnet", tokens=8000) == {})
+check("H4 SDK switch is not asked (nobody to ask)",
+      switch("H", "PreModelSwitch", "opus", "sonnet", source="sdk") == {})
+
+# confirmed at the switch prompt -> the send guard does not ask again
+sess="H5"; tx=new_tx("H5")
+append(tx, assistant(time.time()-10, "1h"))
+cache_core.write_settings_state(sess, "opus", "high")
+run(sess, tx, "baseline")
+switch(sess, "PreModelSwitch", "opus", "sonnet")
+switch(sess, "PostModelSwitch", "opus", "sonnet")
+cache_core.write_settings_state(sess, "sonnet", "high")
+check("H5 confirmed switch: first send NOT blocked again",
+      not is_block(run(sess, tx, "go on")))
+
+# a switch nobody could confirm (SDK / desktop picker) blocks the send once
+sess="H6"; tx=new_tx("H6")
+append(tx, assistant(time.time()-10, "1h"))
+run(sess, tx, "baseline")
+switch(sess, "PostModelSwitch", "opus", "sonnet", source="sdk")
+o1 = run(sess, tx, "go on")
+check("H6 unconfirmed switch: first send BLOCKED", is_block(o1), o1)
+check("H6 reason names both models", "opus" in reason(o1) and "sonnet" in reason(o1), reason(o1))
+check("H6 re-send allowed", not is_block(run(sess, tx, "go on")))
+
+sess="H7"; tx=new_tx("H7")
+append(tx, assistant(time.time()-10, "1h"))
+run(sess, tx, "baseline")
+switch(sess, "PostModelSwitch", "opus", "sonnet", source="sdk")
+switch(sess, "PostModelSwitch", "sonnet", "opus", source="sdk")
+check("H7 switching back clears the block", not is_block(run(sess, tx, "go on")))
+
+sess="H8"; tx=new_tx("H8")
+append(tx, assistant(time.time()-10, "1h", read=9000, create=3000))
+run(sess, tx, "baseline")
+switch(sess, "PostModelSwitch", "opus", "sonnet", source="sdk", tokens=12000)
+check("H8 unconfirmed but small switch NOT blocked", not is_block(run(sess, tx, "go on")))
 
 print("\n%d failures" % len(fails))
 shutil.rmtree(STATE, ignore_errors=True); shutil.rmtree(WORK, ignore_errors=True)

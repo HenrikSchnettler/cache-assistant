@@ -9,13 +9,32 @@ re-write. Cache Assistant makes that window visible and gives you guardrails.
 
 ## What you get
 
+- **Band above the prompt** (Claude Code mod, v2.1.288+) — everything the status
+  line shows (tier, countdown, cold re-write size, model) plus **advice**: when
+  the window has expired it says whether to just keep going (small re-write) or
+  to `/compact` / `/clear` first (large one); it warns before a large cache goes
+  cold, tells you how long switching back stays free after a **model switch**,
+  and reports an **unexpected cache miss** (a request that did not read the warm
+  prefix) with the setting that changed. A **keep-alive button** holds the cache
+  warm with pings that add nothing to the conversation and stops by itself after
+  a ping limit. `/cache-keepalive` toggles it, `/cache-band` shows or hides the
+  band.
+- **One threshold for "small vs large"** — the plugin option
+  `block_threshold_tokens` (default **50,000**). Below it nothing blocks and the
+  band says to keep going; at or above it the guards interrupt. `0` always
+  blocks. `keepalive_max_pings` (default 12) caps the keep-alive.
+- **Model-switch confirmation** — `/model` or the picker on a warm, large cache
+  asks first (Claude Code's `PreModelSwitch` hook), naming the re-cache size and
+  cost. A switch that cannot be asked about (desktop/SDK, automatic fallback)
+  blocks the first send once instead; switching back clears it.
 - **Status line row** — the current cache **tier** (`5m` / `1h`) and a live
   `mm:ss` **countdown** to expiry, ticking every second. It reads the *current*
   tier from the transcript each tick, so a mid-session tier switch (e.g. `1h → 5m`
   on usage overage) re-bases the countdown immediately.
 - **Cache-expiry guard** — before a send, if the window has already expired, the
   first attempt is **blocked** with an explanation and a token estimate for the
-  cold re-write. Send again to proceed.
+  cold re-write. Send again to proceed. Only for re-writes at or above the
+  threshold.
 - **Model / effort-change guard** — switching model or reasoning effort busts the
   whole cache. The first message under the new setting is **blocked** so you can
   revert without losing your warm cache. Send again to proceed.
@@ -76,7 +95,11 @@ incremental read and never served stale.
 lib/cache_core.py                       # shared engine (tier, countdown, state)
 statusline/statusline.py                # the status line row
 statusline/cache_status.py              # /cache-status backing script
-hooks/hooks.json                        # registers both hooks
+hooks/hooks.json                        # registers the hooks and the mod's module
+hooks/register.tsx                      # the band above the prompt (hooks module)
+hooks/advice.ts                         # what the band says, as pure functions
+hooks/model_switch.py                   # PreModelSwitch / PostModelSwitch hook
+types/index.d.ts                        # the mod's state contract
 hooks/guard.py                          # UserPromptSubmit guards (block on send)
 hooks/session_notice.py                 # SessionStart notice (warn on resume)
 commands/cache-status.md
@@ -108,5 +131,6 @@ python3 tests/test_core.py
 python3 tests/test_guard.py
 python3 tests/test_installer.py
 python3 tests/test_keepalive.py
+claude plugin test .          # the band (tests/band.test.ts)
 python3 tests/test_session_notice.py
 ```
