@@ -23,7 +23,7 @@ def iso(epoch):
     import datetime
     return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
-def assistant(epoch, tier, read=25000, create=9000, inp=4):
+def assistant(epoch, tier, read=85000, create=9000, inp=4):
     cc = {"ephemeral_5m_input_tokens": create if tier=="5m" else 0,
           "ephemeral_1h_input_tokens": create if tier=="1h" else 0}
     return {"type":"assistant","requestId":"req_%d"%int(epoch*1000),"timestamp":iso(epoch),
@@ -101,6 +101,17 @@ append(tx, assistant(time.time()-4000, "1h"))
 append(tx, compact_boundary(time.time()-5))
 rc, err, out = run(sess, tx, source="compact")
 check("F1 no stale EXPIRED warning after compact", rc == 0 and not err.strip(), (rc, err))
+
+# ============ small expired window -> silent ================================
+print("\n-- Scenario: block threshold --")
+sess="T1"; tx=new_tx("T1")
+append(tx, assistant(time.time()-4000, "1h", read=9000, create=3000))
+rc, err, out = run(sess, tx)
+check("T1 expired but small: silent", rc == 0 and not err.strip(), (rc, err))
+env["CLAUDE_PLUGIN_OPTION_BLOCK_THRESHOLD_TOKENS"] = "1000"
+rc, err, out = run(sess, tx)
+check("T2 lowered threshold warns", warned(rc, err), (rc, err))
+del env["CLAUDE_PLUGIN_OPTION_BLOCK_THRESHOLD_TOKENS"]
 
 print("\n%d failures" % len(fails))
 shutil.rmtree(STATE, ignore_errors=True); shutil.rmtree(WORK, ignore_errors=True)

@@ -53,7 +53,44 @@ TIER_PING_INTERVAL = {"5m": 240, "1h": 1800}
 # them. Single source of truth, imported by the hook and the keep-alive loop.
 KEEPALIVE_MARKER = "[cache-assistant:keepalive]"
 
+# "Small vs large" cold re-write. Below this many tokens a cold re-write is
+# cheap enough that the guards stay quiet and the advice is "just keep going";
+# at or above it they block once / warn. One value for the whole plugin: the
+# `block_threshold_tokens` plugin option (exported to hook commands as
+# CLAUDE_PLUGIN_OPTION_BLOCK_THRESHOLD_TOKENS), 0 = always block.
+DEFAULT_BLOCK_THRESHOLD = 50000
+
+# A request that read less than this share of the prefix the previous request
+# left in a still-warm cache is an unexpected cache miss (something busted it).
+MISS_READ_RATIO = 0.5
+MISS_MIN_TOKENS = 2048
+
 _UNSET = object()
+
+
+def block_threshold():
+    """Token count from which a cold re-write counts as large (see above)."""
+    for name in ("CLAUDE_PLUGIN_OPTION_BLOCK_THRESHOLD_TOKENS",
+                 "CACHE_ASSISTANT_BLOCK_THRESHOLD"):
+        raw = os.environ.get(name)
+        if raw is None or not str(raw).strip():
+            continue
+        try:
+            return max(0, int(float(raw)))
+        except ValueError:
+            continue
+    return DEFAULT_BLOCK_THRESHOLD
+
+
+def is_large(tokens):
+    """True when re-writing `tokens` is worth interrupting for. An unknown
+    size counts as large, so a guard never goes quiet for lack of data."""
+    if tokens is None:
+        return True
+    try:
+        return int(tokens) >= block_threshold()
+    except (TypeError, ValueError):
+        return True
 
 
 def state_dir():
@@ -157,6 +194,27 @@ def _scan_assistant_line(obj, acc):
     ts = _parse_iso_epoch(obj.get("timestamp"))
     if ts is None:
         return
+    # An unexpected miss: a new request inside the still-open window that read
+    # far less than the prefix the previous one left cached. Whatever changed the
+    # prefix (model, effort, tools, system prompt, ...) busted the cache.
+    rid = obj.get("requestId")
+    model = msg.get("model")
+    prev_anchor, prev_tokens = acc["anchor_epoch"], acc["rewrite_tokens"]
+    ttl = TIER_TTL.get(acc["tier"])
+    if (prev_anchor is not None and ttl and prev_tokens
+            and (rid is None or rid != acc["last_request_id"])
+            and 0 <= ts - prev_anchor <= ttl
+            and prev_tokens >= MISS_MIN_TOKENS
+            and read < prev_tokens * MISS_READ_RATIO):
+        acc["miss"] = {
+            "epoch": ts,
+            "expected_tokens": int(prev_tokens),
+            "read_tokens": int(read),
+            "written_tokens": int(create),
+            "model_changed": bool(acc["model"] and model and model != acc["model"]),
+        }
+    if model:
+        acc["model"] = model
     # This request refreshed the cache -> it becomes the anchor if newest.
     if acc["anchor_epoch"] is None or ts >= acc["anchor_epoch"]:
         acc["anchor_epoch"] = ts
@@ -180,6 +238,8 @@ def _blank_acc():
         "tier_epoch": None,
         "rewrite_tokens": None,
         "last_request_id": None,
+        "model": None,
+        "miss": None,
     }
 
 
@@ -203,6 +263,8 @@ def get_cache_state(transcript_path, session_id, now=None):
         "remaining_seconds": None,
         "expired": None,
         "rewrite_tokens": None,
+        "model": None,
+        "miss": None,
         "have_data": False,
         "path": "none",  # which code path ran: none|fast|incremental|full
     }
@@ -269,18 +331,37 @@ def get_cache_state(transcript_path, session_id, now=None):
     if acc["anchor_epoch"] is None:
         return result  # transcript exists but no cache-bearing turn yet
 
+    # A keep-alive ping that hit the cache without adding a transcript line
+    # (the mod's fork ping) slid the window too: it is the anchor if newer.
+    anchor = acc["anchor_epoch"]
+    touch = (full.get("touch") or {}).get("epoch")
+    if isinstance(touch, (int, float)) and touch > anchor:
+        anchor = touch
+
     tier = acc["tier"]
     result["have_data"] = True
     result["tier"] = tier
-    result["anchor_epoch"] = acc["anchor_epoch"]
+    result["anchor_epoch"] = anchor
     result["rewrite_tokens"] = acc["rewrite_tokens"]
+    result["model"] = acc["model"]
+    result["miss"] = acc["miss"]
     if tier in TIER_TTL:
         ttl = TIER_TTL[tier]
         result["ttl_seconds"] = ttl
-        remaining = acc["anchor_epoch"] + ttl - now
+        remaining = anchor + ttl - now
         result["remaining_seconds"] = remaining
         result["expired"] = remaining <= 0
     return result
+
+
+def record_touch(session_id, now=None):
+    """Record that the cached prefix was read right now by something that left
+    no transcript line (a keep-alive fork ping), sliding the window forward."""
+    if now is None:
+        now = time.time()
+    full = _load_state(session_id)
+    full["touch"] = {"epoch": now}
+    _save_state(session_id, full)
 
 
 # --- settings sensor (model / effort), written by the status line ----------

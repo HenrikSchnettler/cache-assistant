@@ -3,6 +3,7 @@
 Backs the /cache-status command."""
 import argparse
 import datetime
+import json
 import os
 import sys
 
@@ -15,6 +16,10 @@ def main():
     ap.add_argument("--session", default=None)
     ap.add_argument("--transcript", default=None)
     ap.add_argument("--cwd", default=None)
+    ap.add_argument("--json", action="store_true",
+                    help="print the state as one JSON object (used by the mod)")
+    ap.add_argument("--touch", action="store_true",
+                    help="record a keep-alive cache hit that left no transcript line")
     args = ap.parse_args()
 
     cwd = args.cwd or os.getcwd()
@@ -23,6 +28,18 @@ def main():
         session_id, transcript = cache_core.auto_detect_session(cwd)
     if session_id and not transcript:
         transcript = cache_core.find_transcript(session_id)
+    if args.touch and session_id:
+        cache_core.record_touch(session_id)
+    if args.json:
+        st = (cache_core.get_cache_state(transcript, session_id)
+              if transcript else {"have_data": False})
+        st.pop("path", None)
+        st["session_id"] = session_id
+        st["transcript"] = transcript
+        st["ping_interval_seconds"] = cache_core.TIER_PING_INTERVAL.get(st.get("tier"))
+        st["block_threshold_tokens"] = cache_core.block_threshold()
+        print(json.dumps(st))
+        return 0
     if not transcript:
         print("Cache Assistant: could not locate a session transcript for {}.".format(cwd))
         return 2

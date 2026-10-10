@@ -59,6 +59,9 @@ def main():
     # Silent unless there is real cache data AND its window has already expired.
     if not (state.get("have_data") and state.get("expired")):
         _silent()
+    # A small cold re-write is not worth a warning: just keep going.
+    if not cache_core.is_large(state.get("rewrite_tokens")):
+        _silent()
 
     tier = cache_core.TIER_LABEL.get(state.get("tier"), "?")
     rewrite = cache_core.fmt_tokens(state.get("rewrite_tokens"))

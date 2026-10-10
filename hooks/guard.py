@@ -142,10 +142,31 @@ def main():
     committed = guard.get("committed")
     cache_warm = state.get("have_data") and state.get("expired") is False
     rewrite = cache_core.fmt_tokens(state.get("rewrite_tokens"))
+    # Below the threshold a cold re-write is cheap: never block, just send.
+    large = cache_core.is_large(state.get("rewrite_tokens"))
+
+    # --- Guard 0: a model switch reported by the PreModelSwitch/PostModelSwitch
+    # hooks (hooks/model_switch.py). This is the live source where it exists; a
+    # switch the user already confirmed at the switch prompt is not asked again.
+    switch = guard.pop("switch", None)
+    if switch and cache_warm and large and not switch.get("confirmed") \
+            and switch.get("warm"):
+        guard["pending"] = {"reason": "model_switch",
+                            "prompt_hash": _prompt_hash(prompt), "at": now}
+        _save_guard(session_id, guard)
+        _block(
+            "⚡ Cache Assistant: the model changed {} → {}. That busts the "
+            "whole prompt cache and forces ~{} tokens to be re-cached on this "
+            "first message under the new model.\n\n"
+            "→ If this was a mistake, switch back now and your warm cache is "
+            "untouched.\n"
+            "→ To proceed anyway, send the same message again."
+            .format(switch.get("from"), switch.get("to"), rewrite))
 
     # --- Guard 1: model / effort change while the cache is still warm ---------
-    if committed and model and cache_warm:
-        changed_model = committed.get("model_id") != model
+    if committed and model and cache_warm and large:
+        # A switch the model-switch hooks reported was handled above.
+        changed_model = committed.get("model_id") != model and not switch
         changed_effort = (committed.get("effort_level") or None) != (effort or None)
         if changed_model or changed_effort:
             what = []
@@ -168,7 +189,7 @@ def main():
                 .format(" and ".join(what), rewrite))
 
     # --- Guard 2: expired cache window ---------------------------------------
-    if state.get("have_data") and state.get("expired"):
+    if state.get("have_data") and state.get("expired") and large:
         tier = cache_core.TIER_LABEL.get(state.get("tier"), "?")
         guard["pending"] = {"reason": "expiry",
                             "prompt_hash": _prompt_hash(prompt), "at": now}
