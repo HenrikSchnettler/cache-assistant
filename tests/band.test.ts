@@ -251,3 +251,41 @@ test('a switch on a cold, large cache still offers compact and clear', async ($,
   expect(await ui.find({ type: 'Text', text: /re-caches ~120\.0k tokens from cold/ })).toBeDefined()
   expect(await ui.find({ key: 'compact' })).toBeDefined()
 })
+
+test('while Claude works the band shows a placeholder and no controls', async ($, on) => {
+  host(on, warm({ anchor_epoch: T0 / 1000 - 4000 }))
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  await start($)
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    await $.turn.start({ text: 'hi', turnId: 't1' })
+    expect(await ui.find({ type: 'Text', text: 'Claude is working…' })).toBeDefined()
+    expect(await ui.find({ text: 'in use' })).toBeDefined()
+    for (const key of ['compact', 'clear', 'keepalive']) expect(await ui.find({ key })).toBeUndefined()
+    await $.turn.complete({ reason: 'aborted', answer: '', durationMs: 5, isAborted: true, turnId: 't1' })
+    expect(await ui.find({ type: 'Text', text: 'Claude is working…' })).toBeUndefined()
+    expect(await ui.find({ key: 'compact' })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('a compaction shows its own placeholder and locks the buttons', async ($, on) => {
+  host(on, warm({ anchor_epoch: T0 / 1000 - 4000 }))
+  const during: boolean[] = []
+  const seat: { ui?: { find: (q: { type?: 'Text'; key?: string; text?: string }) => Promise<unknown> } } = {}
+  on('session.compact', async () => {
+    const ui = seat.ui
+    if (ui === undefined) throw new Error('not mounted')
+    during.push((await ui.find({ type: 'Text', text: 'Compacting the conversation…' })) !== undefined)
+    during.push((await ui.find({ key: 'compact' })) === undefined)
+    return { messages: [{ role: 'user' as const, text: 'summary', toolUses: [] }] }
+  })
+  await start($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  seat.ui = ui
+  const summary = { role: 'user' as const, text: 'old', toolUses: [] }
+  await $.session.compact({ trigger: 'manual', messages: [summary] })
+  expect(during).toEqual([true, true])
+  expect(await ui.find({ type: 'Text', text: 'Compacting the conversation…' })).toBeUndefined()
+})

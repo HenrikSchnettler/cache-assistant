@@ -8,9 +8,9 @@
 // string compare.
 
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { CacheView, KeepAlive, Notice, SessionRef } from '../types'
+import type { Busy, CacheView, KeepAlive, Notice, SessionRef } from '../types'
 import type { Action } from './advice'
 import {
   advise,
@@ -32,6 +32,15 @@ const keepAlive = atom({ plugin: 'cache-assistant', key: 'keepAlive' } as const,
 const notice = atom({ plugin: 'cache-assistant', key: 'notice' } as const, null)
 const isHidden = atom({ plugin: 'cache-assistant', key: 'isHidden' } as const, false)
 const session = atom({ plugin: 'cache-assistant', key: 'session' } as const, null)
+const busy = atom({ plugin: 'cache-assistant', key: 'busy' } as const, null)
+const frame = atom({ plugin: 'cache-assistant', key: 'frame' } as const, 0)
+
+const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+const BUSY_LABEL: Record<Busy, string> = {
+  working: 'Claude is working…',
+  compacting: 'Compacting the conversation…',
+  clearing: 'Clearing the conversation…',
+}
 
 const PING = 'Cache keep-alive ping. Reply with the single word "pong" and nothing else.'
 
@@ -55,11 +64,26 @@ let threshold = 50000
 let maxPings = 12
 
 let isWorking = false
+// Steps the busy animation; runs only while something is busy.
+let spinner: Timer | null = null
 let isPinging = false
 // The newest miss already reported (or older than this load).
 let missSeenMs = 0
 // Settings changed since the last turn: the suspects for a cache miss.
 let changed: string[] = []
+
+// What the session is busy with: the band draws an animated placeholder in
+// place of its controls, so nothing can be pressed that would collide.
+const setBusy = async ($: EngineInterface, next: Busy | null) => {
+  if ((await read($, busy)) === next) return
+  await update($, busy, () => next)
+  if (next === null) {
+    spinner?.cancel()
+    spinner = null
+  } else if (spinner === null) {
+    spinner = $.clock.every(120, () => void update($, frame, (n: number) => (n + 1) % SPINNER.length))
+  }
+}
 
 // Reads the window from the transcript through the plugin's own engine.
 // `touch` first records a keep-alive hit that left no transcript line.
@@ -153,11 +177,15 @@ const toggleKeepAlive = async ($: EngineInterface): Promise<string> => {
 // engine still counts a turn, as after an interrupted one). Our own hooks do
 // not see what this module runs, so the window is re-read here.
 const cure = async ($: EngineInterface, action: Action) => {
+  if ((await read($, busy)) !== null) return
+  await setBusy($, action === 'compact' ? 'compacting' : 'clearing')
   try {
     await $.command.run({ command: action })
   } catch (err) {
     $.ui.toast(`Could not ${action}: ${err instanceof Error ? err.message : String(err)}`)
     return
+  } finally {
+    await setBusy($, isWorking ? 'working' : null)
   }
   if (action === 'clear') await update($, keepAlive, () => ({ isOn: false, pings: 0 }))
   await update($, notice, () => null)
@@ -207,6 +235,8 @@ export const register: Register = (on, options) => {
       name: 'cache-band',
       description: 'Show or hide the Cache Assistant band above the prompt',
     })
+    // A reload drops the animation's timer: start from idle.
+    await update($, busy, () => null)
     const view = await refresh($)
     missSeenMs = view?.miss?.atMs ?? 0
     $.clock.every(1000, () => void tick($))
@@ -237,6 +267,7 @@ export const register: Register = (on, options) => {
 
   on('turn.start', async ($, e, next) => {
     isWorking = true
+    if ((await read($, busy)) === null) await setBusy($, 'working')
     // A message from the person: the keep-alive budget starts over.
     await update($, keepAlive, (k: KeepAlive) => (k.pings === 0 ? k : { ...k, pings: 0 }))
 
@@ -247,6 +278,7 @@ export const register: Register = (on, options) => {
     const done = await next(e)
     if (e.agentId === undefined) {
       isWorking = false
+      if ((await read($, busy)) === 'working') await setBusy($, null)
       await afterTurn($)
     }
 
@@ -261,11 +293,19 @@ export const register: Register = (on, options) => {
     return answer
   })
 
+  // /compact typed, the engine's auto-compact, or the band's own button.
   on('session.compact', async ($, e, next) => {
-    const compacted = await next(e)
-    if (e.agentId === undefined) await refresh($)
-
-    return compacted
+    if (e.agentId !== undefined || e.trigger === 'precompute') return next(e)
+    const before = await read($, busy)
+    await setBusy($, 'compacting')
+    try {
+      const compacted = await next(e)
+      await refresh($)
+      return compacted
+    } finally {
+      // An auto-compact runs inside a turn: hand the band back to it.
+      await setBusy($, before === 'compacting' ? 'compacting' : isWorking ? 'working' : null)
+    }
   })
 
   on('session.end', async ($, e, next) => {
@@ -325,18 +365,27 @@ export const register: Register = (on, options) => {
     const model = shortModel(await $.session.model())
     const { Box, Button, Text } = $.ui.resolve(e)
 
+    // A turn already running when this module loaded has set no state yet.
+    const doing = (await read($, busy)) ?? (e.props.isWorking ? 'working' : null)
+    const step = await read($, frame)
+
     const isKnown = view !== null && view.ttlMs !== null
     const left = view ? remainingMs(view, now) : 0
-    const isExpired = isKnown && left <= 0
-    const isClosing = isKnown && !isExpired && left <= Math.max(30_000, (view?.ttlMs ?? 0) * 0.1)
-    const color = !isKnown ? undefined : isExpired ? 'red' : isClosing ? 'yellow' : 'green'
+    // A running request reads and re-writes the prefix: no countdown applies.
+    const isInUse = doing !== null
+    const isExpired = isKnown && !isInUse && left <= 0
+    const isClosing = isKnown && !isInUse && !isExpired && left <= Math.max(30_000, (view?.ttlMs ?? 0) * 0.1)
+    const color = !isKnown ? undefined : isInUse ? 'cyan' : isExpired ? 'red' : isClosing ? 'yellow' : 'green'
     const tier = view?.tier ?? '?'
-    const state = view === null ? 'warming…' : !isKnown ? '?' : isExpired ? 'expired' : `${fmtLeft(left)} left`
+    const state =
+      view === null ? 'warming…' : isInUse ? 'in use' : !isKnown ? '?' : isExpired ? 'expired' : `${fmtLeft(left)} left`
     const size =
       view === null || !isKnown ? null : `~${fmtTokens(view.tokens)} ${isExpired ? 'to re-cache' : 'cached'}`
-    const advice = advise({ view, now, threshold, note, isKeepAliveOn: alive.isOn })
-    // Keep-alive can only hold a window that is still open.
-    const canKeepAlive = alive.isOn || (isKnown && !isExpired)
+    const advice = isInUse ? null : advise({ view, now, threshold, note, isKeepAliveOn: alive.isOn })
+    // Keep-alive can only hold a window that is still open, and is left alone
+    // while the session is busy (a running turn keeps the cache warm itself).
+    const canKeepAlive = !isInUse && (alive.isOn || (isKnown && !isExpired))
+    const keepAliveLabel = alive.isOn ? `keep-alive on ${alive.pings}/${maxPings}` : 'keep-alive off'
     // A desktop draws in proportional type, where terminal spacing reads as
     // cramped; half a cell there evens its own band padding out to all sides.
     const isRoomy = e.surface !== 'terminal'
@@ -362,7 +411,7 @@ export const register: Register = (on, options) => {
             {canKeepAlive ? (
               <Button
                 key="keepalive"
-                label={alive.isOn ? `keep-alive on ${alive.pings}/${maxPings}` : 'keep-alive off'}
+                label={keepAliveLabel}
                 variant={alive.isOn ? 'primary' : 'secondary'}
                 onPress={async () => {
                   const said = await toggleKeepAlive($)
@@ -370,10 +419,16 @@ export const register: Register = (on, options) => {
                 }}
               />
             ) : (
-              <Text dimColor>keep-alive off</Text>
+              <Text dimColor>{keepAliveLabel}</Text>
             )}
           </Box>
         </Box>
+        {doing !== null && (
+          <Box paddingLeft={indent} columnGap={1}>
+            <Text color="cyan">{SPINNER[step % SPINNER.length]}</Text>
+            <Text dimColor>{BUSY_LABEL[doing]}</Text>
+          </Box>
+        )}
         {advice !== null && (
           <Box paddingLeft={indent}>
             <Text color={advice.tone === 'warn' ? 'yellow' : undefined} dimColor={advice.tone === 'calm'} wrap="wrap">

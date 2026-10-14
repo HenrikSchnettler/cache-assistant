@@ -32,6 +32,9 @@ export type Notice =
     }
   | { kind: 'miss'; expected: number; read: number; causes: readonly string[] }
 
+/** What the session is busy with, drawn in place of the band's controls. */
+export type Busy = 'working' | 'compacting' | 'clearing'
+
 export type SessionRef = { id: string; transcript: string | null }
 
 declare module 'claude-code' {
@@ -42,6 +45,8 @@ declare module 'claude-code' {
       keepAlive: KeepAlive
       notice: Notice | null
       isHidden: boolean
+      busy: Busy | null
+      frame: number
       session: SessionRef | null
     }
   }
