@@ -341,11 +341,17 @@ export const register: Register = (on, options) => {
     const advice = advise({ view, now, threshold, note, isKeepAliveOn: alive.isOn })
     // Keep-alive can only hold a window that is still open.
     const canKeepAlive = alive.isOn || (isKnown && !isExpired)
+    // A desktop draws in proportional type, where terminal spacing reads as
+    // cramped; half a cell there evens its own band padding out to all sides.
+    const isRoomy = e.surface !== 'terminal'
+    const space = isRoomy ? 0.5 : 0
+    const gap = isRoomy ? 1.5 : 1
+    const indent = isRoomy ? 2.5 : 2
 
     return (
-      <Box flexDirection="column" width={e.props.bodyColumns}>
-        <Box justifyContent="space-between" columnGap={2} flexWrap="wrap">
-          <Box columnGap={1}>
+      <Box flexDirection="column" width={e.props.bodyColumns} rowGap={space} paddingY={space}>
+        <Box justifyContent="space-between" columnGap={gap * 2} flexWrap="wrap">
+          <Box columnGap={gap}>
             <Text color={color} dimColor={color === undefined}>
               ●
             </Text>
@@ -353,10 +359,10 @@ export const register: Register = (on, options) => {
             <Text color={color} dimColor={color === undefined} bold={isExpired}>
               {state}
             </Text>
-            {size !== null && <Text dimColor>· {size}</Text>}
+            {size !== null && <Text dimColor>{size}</Text>}
           </Box>
-          <Box columnGap={1}>
-            <Text dimColor>{model} ·</Text>
+          <Box columnGap={gap}>
+            <Text dimColor>{model}</Text>
             {canKeepAlive ? (
               <Button
                 key="keepalive"
@@ -373,14 +379,14 @@ export const register: Register = (on, options) => {
           </Box>
         </Box>
         {advice !== null && (
-          <Box paddingLeft={2}>
+          <Box paddingLeft={indent}>
             <Text color={advice.tone === 'warn' ? 'yellow' : undefined} dimColor={advice.tone === 'calm'} wrap="wrap">
               {advice.text}
             </Text>
           </Box>
         )}
         {advice?.actions !== undefined && (
-          <Box paddingLeft={2} columnGap={1}>
+          <Box paddingLeft={indent} columnGap={gap}>
             {advice.actions.map((action, i) => (
               <Button
                 key={action}
