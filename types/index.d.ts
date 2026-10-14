@@ -32,6 +32,17 @@ export type Notice =
     }
   | { kind: 'miss'; expected: number; read: number; causes: readonly string[] }
 
+/** The guard as the band sees it: a block waiting for Allow send anyway, or an ack. */
+export type Gate = {
+  /** Allow send anyway was pressed: the guard lets the next message through. */
+  isArmed: boolean
+  /** Why the guard blocked the last send (`expiry`, `model_switch`, `model_effort`). */
+  blocked: string | null
+}
+
+/** What the session is busy with, drawn in place of the band's controls. */
+export type Busy = 'working' | 'compacting' | 'clearing'
+
 export type SessionRef = { id: string; transcript: string | null }
 
 declare module 'claude-code' {
@@ -42,6 +53,9 @@ declare module 'claude-code' {
       keepAlive: KeepAlive
       notice: Notice | null
       isHidden: boolean
+      busy: Busy | null
+      gate: Gate
+      frame: number
       session: SessionRef | null
     }
   }

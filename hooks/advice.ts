@@ -1,15 +1,17 @@
 // What the band says: formatting and the advice for each cache situation.
 // Pure functions of the window, the clock and the threshold.
 
-import type { CacheView, Notice } from '../types'
+import type { CacheView, Gate, Notice } from '../types'
 
 export type Advice = {
   text: string
   /** `warn`: acting first saves a large re-write; `calm`: nothing to do. */
   tone: 'warn' | 'calm'
-  /** A command worth putting in the prompt box, offered as a button. */
-  fill?: string
+  /** What the band offers as buttons, in order: the cures for a cold, large cache. */
+  actions?: readonly Action[]
 }
+
+export type Action = 'compact' | 'clear' | 'send'
 
 export const fmtTokens = (n: number | null): string =>
   n === null ? '?' : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
@@ -66,19 +68,37 @@ export const isDue = (view: CacheView, now: number): boolean =>
 export const isLarge = (tokens: number | null, threshold: number): boolean =>
   tokens === null || tokens >= threshold
 
-export const advise = (input: {
+type AdviceInput = {
   view: CacheView | null
   now: number
   threshold: number
   note: Notice | null
   isKeepAliveOn: boolean
-}): Advice | null => {
-  const { view, now, threshold, note, isKeepAliveOn } = input
+  gate: Gate
+}
+
+// The guard blocks a large cold re-write until Allow send anyway is pressed; once it
+// is, the button gives way to saying the next message goes through.
+export const advise = (input: AdviceInput): Advice | null => {
+  const advice = adviseCache(input)
+  if (!input.gate.isArmed) return advice
+  const armed = 'Sending anyway is allowed: your next message goes through.'
+  if (advice === null) return { tone: 'calm', text: armed }
+  const actions = advice.actions?.filter(a => a !== 'send')
+
+  return { ...advice, text: `${advice.text} ${armed}`, actions: actions?.length ? actions : undefined }
+}
+
+const adviseCache = (input: AdviceInput): Advice | null => {
+  const { view, now, threshold, note, isKeepAliveOn, gate } = input
 
   if (note?.kind === 'switch') {
     const size = `~${fmtTokens(note.tokens)} tokens`
     const route = `${shortModel(note.from)} → ${shortModel(note.to)}`
     if (note.warmUntilMs === null || note.warmUntilMs <= now) {
+      // The switch costs nothing extra; what the cold cache calls for still stands.
+      const cold = adviseCache({ ...input, note: null })
+      if (cold?.tone === 'warn') return cold
       return { tone: 'calm', text: `Model switched ${route}. The old cache was already cold, so nothing extra is lost.` }
     }
     if (!isLarge(note.tokens, threshold)) {
@@ -87,6 +107,7 @@ export const advise = (input: {
 
     return {
       tone: 'warn',
+      actions: ['send'],
       text:
         `Model switched ${route}: the next message re-caches ${size} from cold. ` +
         `Switch back within ${fmtLeft(note.warmUntilMs - now)} and the ${shortModel(note.from)} cache is untouched.`,
@@ -119,10 +140,19 @@ export const advise = (input: {
 
     return {
       tone: 'warn',
-      fill: '/compact',
+      actions: ['compact', 'clear', 'send'],
       text:
-        `Sending now re-caches ${size} from cold. New topic: /clear. Same topic: /compact first, ` +
-        'then carry on with a small context. To send anyway, send the message twice.',
+        `Sending now re-caches ${size} from cold. Same topic: compact first and carry on with a small context. ` +
+        'New topic: clear.',
+    }
+  }
+
+  // A model or effort change the guard caught (one no switch event announced).
+  if (gate.blocked === 'model_effort' || gate.blocked === 'model_switch') {
+    return {
+      tone: 'warn',
+      actions: ['send'],
+      text: `You changed the model or effort, which re-caches ${size} from cold. Switch back and the cache is untouched.`,
     }
   }
 

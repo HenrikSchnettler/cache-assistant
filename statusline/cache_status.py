@@ -20,6 +20,10 @@ def main():
                     help="print the state as one JSON object (used by the mod)")
     ap.add_argument("--touch", action="store_true",
                     help="record a keep-alive cache hit that left no transcript line")
+    ap.add_argument("--allow-next", action="store_true",
+                    help="the band's Allow send anyway: the guard lets the next message through")
+    ap.add_argument("--band", choices=("on", "off"), default=None,
+                    help="record whether the band (and its Allow send anyway) is drawn")
     args = ap.parse_args()
 
     cwd = args.cwd or os.getcwd()
@@ -30,6 +34,10 @@ def main():
         transcript = cache_core.find_transcript(session_id)
     if args.touch and session_id:
         cache_core.record_touch(session_id)
+    if args.allow_next and session_id:
+        cache_core.allow_next(session_id)
+    if args.band and session_id:
+        cache_core.set_band(session_id, args.band == "on")
     if args.json:
         st = (cache_core.get_cache_state(transcript, session_id)
               if transcript else {"have_data": False})
@@ -38,6 +46,10 @@ def main():
         st["transcript"] = transcript
         st["ping_interval_seconds"] = cache_core.TIER_PING_INTERVAL.get(st.get("tier"))
         st["block_threshold_tokens"] = cache_core.block_threshold()
+        guard = cache_core.load_guard(session_id) if session_id else {}
+        st["armed"] = guard.get("ack") is not None
+        pending = guard.get("pending") or {}
+        st["blocked"] = pending.get("reason") if pending and not st["armed"] else None
         print(json.dumps(st))
         return 0
     if not transcript:

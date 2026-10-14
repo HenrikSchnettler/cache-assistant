@@ -12,7 +12,8 @@ re-write. Cache Assistant makes that window visible and gives you guardrails.
 - **Band above the prompt** (Claude Code mod, v2.1.288+) — everything the status
   line shows (tier, countdown, cold re-write size, model) plus **advice**: when
   the window has expired it says whether to just keep going (small re-write) or
-  to `/compact` / `/clear` first (large one); it warns before a large cache goes
+  to compact or clear first (large one), with **Compact** and **Clear** buttons
+  right there; it warns before a large cache goes
   cold, tells you how long switching back stays free after a **model switch**,
   and reports an **unexpected cache miss** (a request that did not read the warm
   prefix) with the setting that changed. A **keep-alive button** holds the cache
@@ -33,11 +34,12 @@ re-write. Cache Assistant makes that window visible and gives you guardrails.
   on usage overage) re-bases the countdown immediately.
 - **Cache-expiry guard** — before a send, if the window has already expired, the
   first attempt is **blocked** with an explanation and a token estimate for the
-  cold re-write. Send again to proceed. Only for re-writes at or above the
-  threshold.
+  cold re-write. Press **Allow send anyway** in the band to let the next message
+  through (without the band: send the same message again). Only for re-writes at
+  or above the threshold.
 - **Model / effort-change guard** — switching model or reasoning effort busts the
   whole cache. The first message under the new setting is **blocked** so you can
-  revert without losing your warm cache. Send again to proceed.
+  revert without losing your warm cache. **Allow send anyway** in the band proceeds.
 - **Session-start notice** — when you **resume** a session whose window lapsed
   while you were away, a heads-up is **shown to you on entry** (with the same cold
   re-write estimate), so you know the first turn is cold before you type. A
