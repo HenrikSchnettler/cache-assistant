@@ -401,12 +401,27 @@ export const register: Register = (on, options) => {
     const isInUse = doing !== null
     const isExpired = isKnown && !isInUse && left <= 0
     const isClosing = isKnown && !isInUse && !isExpired && left <= Math.max(30_000, (view?.ttlMs ?? 0) * 0.1)
-    const color = !isKnown ? undefined : isInUse ? 'cyan' : isExpired ? 'red' : isClosing ? 'yellow' : 'green'
-    const tier = view?.tier ?? '?'
-    const state =
-      view === null ? 'warming…' : isInUse ? 'in use' : !isKnown ? '?' : isExpired ? 'expired' : `${fmtLeft(left)} left`
-    const size =
-      view === null || !isKnown || isInUse ? null : `~${fmtTokens(view.tokens)} ${isExpired ? 'to re-cache' : 'cached'}`
+    const color = isInUse ? 'cyan' : !isKnown ? undefined : isExpired ? 'red' : isClosing ? 'yellow' : 'green'
+    // Nothing cached yet (a new session, after /clear or a compaction): the same
+    // row as every other state, an empty dot and what fills it.
+    const isEmpty = view === null
+    const title = view?.tier ? `cache ${view.tier}` : 'cache'
+    const state = isInUse
+      ? 'in use'
+      : isEmpty
+        ? 'empty'
+        : !isKnown
+          ? 'tier unknown'
+          : isExpired
+            ? 'expired'
+            : `${fmtLeft(left)} left`
+    const size = isEmpty
+      ? isInUse
+        ? null
+        : 'fills with your next message'
+      : !isKnown || isInUse
+        ? null
+        : `~${fmtTokens(view.tokens)} ${isExpired ? 'to re-cache' : 'cached'}`
     const advice = isInUse
       ? null
       : advise({ view, now, threshold, note, isKeepAliveOn: alive.isOn, gate: await read($, gate) })
@@ -428,9 +443,9 @@ export const register: Register = (on, options) => {
         <Box justifyContent="space-between" columnGap={gap * 2}>
           <Box columnGap={gap} flexShrink={1}>
             <Text color={color} dimColor={color === undefined}>
-              ●
+              {isEmpty ? '○' : '●'}
             </Text>
-            <Text bold>cache {tier}</Text>
+            <Text bold>{title}</Text>
             <Text color={color} dimColor={color === undefined} bold={isExpired}>
               {state}
             </Text>

@@ -333,3 +333,17 @@ test('the hidden band hands the acknowledgement back to a re-send', async ($, on
   })
   expect(seen.runs.at(-1)).toEqual(expect.arrayContaining(['--band', 'off']))
 })
+
+test('an empty cache reads like every other state', async ($, on) => {
+  host(on, { have_data: false, transcript: '/t/s.jsonl' })
+  await start($)
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    expect(await ui.find({ type: 'Text', text: '○' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'cache' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'empty' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'fills with your next message' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /\?|warming/ })).toBeUndefined()
+    await ui.unmount()
+  }
+})
