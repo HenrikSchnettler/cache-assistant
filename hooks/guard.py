@@ -15,7 +15,7 @@ the *currently active* cache tier, with "send again to confirm" semantics:
      cache. This lets the user revert to the previous model/effort without
      having destroyed the cache.
 
-The acknowledgement is the band's "Send anyway" button (hooks/register.tsx),
+The acknowledgement is the band's "Allow send anyway" button (hooks/register.tsx),
 which records `ack` in the guard state: the next message goes through
 unblocked and normal logic resumes (the ack is not sticky). Where the band is
 not drawn (hidden, or a Claude Code without mods), re-sending the same prompt
@@ -95,7 +95,7 @@ def _block(reason):
 
 def _proceed(has_band):
     if has_band:
-        return "To proceed anyway, press Send anyway in the band above the prompt, then send."
+        return "To proceed anyway, press Allow send anyway in the band above the prompt, then send."
     return "To proceed anyway, send the same message again."
 
 
@@ -118,7 +118,7 @@ def main():
     model, effort, _src = _current_selection(session_id)
     cur_setting = {"model_id": model, "effort_level": effort}
 
-    # --- Acknowledgement: the band's Send anyway, or (without the band) the
+    # --- Acknowledgement: the band's Allow send anyway, or (without the band) the
     # same prompt re-sent after a block -> let it through.
     pending = guard.get("pending")
     now = time.time()

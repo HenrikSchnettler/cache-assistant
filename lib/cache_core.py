@@ -384,14 +384,14 @@ def save_guard(session_id, data):
 
 
 def allow_next(session_id, now=None):
-    """The band's "Send anyway": the guard lets the next message through once."""
+    """The band's "Allow send anyway": the guard lets the next message through once."""
     guard = load_guard(session_id)
     guard["ack"] = {"at": time.time() if now is None else now}
     save_guard(session_id, guard)
 
 
 def set_band(session_id, is_shown):
-    """Whether the band (and its Send anyway button) is drawn for this session.
+    """Whether the band (and its Allow send anyway button) is drawn for this session.
     Without it the guard falls back to "send the same message again"."""
     guard = load_guard(session_id)
     guard["band"] = bool(is_shown)

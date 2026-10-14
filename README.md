@@ -34,12 +34,12 @@ re-write. Cache Assistant makes that window visible and gives you guardrails.
   on usage overage) re-bases the countdown immediately.
 - **Cache-expiry guard** — before a send, if the window has already expired, the
   first attempt is **blocked** with an explanation and a token estimate for the
-  cold re-write. Press **Send anyway** in the band to let the next message
+  cold re-write. Press **Allow send anyway** in the band to let the next message
   through (without the band: send the same message again). Only for re-writes at
   or above the threshold.
 - **Model / effort-change guard** — switching model or reasoning effort busts the
   whole cache. The first message under the new setting is **blocked** so you can
-  revert without losing your warm cache. **Send anyway** in the band proceeds.
+  revert without losing your warm cache. **Allow send anyway** in the band proceeds.
 - **Session-start notice** — when you **resume** a session whose window lapsed
   while you were away, a heads-up is **shown to you on entry** (with the same cold
   re-write estimate), so you know the first turn is cold before you type. A

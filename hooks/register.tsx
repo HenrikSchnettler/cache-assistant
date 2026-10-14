@@ -43,7 +43,7 @@ const BUSY_LABEL: Record<Busy, string> = {
   clearing: 'Clearing the conversation…',
 }
 
-const ACTION_LABEL: Record<Action, string> = { compact: 'Compact', clear: 'Clear', send: 'Send anyway' }
+const ACTION_LABEL: Record<Action, string> = { compact: 'Compact', clear: 'Clear', send: 'Allow send anyway' }
 
 const PING = 'Cache keep-alive ping. Reply with the single word "pong" and nothing else.'
 
@@ -277,7 +277,7 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'cache-band' }, async $ => {
     const hidden = !(await read($, isHidden))
     await update($, isHidden, () => hidden)
-    // Hidden, the band offers no Send anyway: the guard takes a re-send instead.
+    // Hidden, the band offers no Allow send anyway: the guard takes a re-send instead.
     await refresh($, '--band', hidden ? 'off' : 'on')
 
     return { text: hidden ? 'Cache Assistant band hidden.' : 'Cache Assistant band shown.' }

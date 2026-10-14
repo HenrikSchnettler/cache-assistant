@@ -100,7 +100,7 @@ Cold-rewrite token estimate (shown by the status line and guards) =
   and `guard-<session>.json` (guard baseline + pending-ack). Writes are atomic
   (`os.replace`) and self-correcting, so a lost write just means a re-parse.
 - **Guard semantics.** A block records `{reason, prompt_hash}`; the band shows
-  it with a **Send anyway** button, which records `ack` in the guard state
+  it with a **Allow send anyway** button, which records `ack` in the guard state
   (`cache_status.py --allow-next`); the next message is allowed and the ack spent
   (not sticky). The mod records `band: true` at session start (`--band on`, off
   while hidden): only without the band is the identical re-send the

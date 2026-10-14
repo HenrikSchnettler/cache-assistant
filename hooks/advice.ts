@@ -77,12 +77,12 @@ type AdviceInput = {
   gate: Gate
 }
 
-// The guard blocks a large cold re-write until Send anyway is pressed; once it
+// The guard blocks a large cold re-write until Allow send anyway is pressed; once it
 // is, the button gives way to saying the next message goes through.
 export const advise = (input: AdviceInput): Advice | null => {
   const advice = adviseCache(input)
   if (!input.gate.isArmed) return advice
-  const armed = 'Send anyway is on: your next message goes through.'
+  const armed = 'Sending anyway is allowed: your next message goes through.'
   if (advice === null) return { tone: 'calm', text: armed }
   const actions = advice.actions?.filter(a => a !== 'send')
 

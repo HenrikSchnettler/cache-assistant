@@ -292,7 +292,7 @@ test('a compaction shows its own placeholder and locks the buttons', async ($, o
   expect(await ui.find({ type: 'Text', text: 'Compacting the conversation…' })).toBeUndefined()
 })
 
-test('Send anyway arms the guard for the next message', async ($, on) => {
+test('Allow send anyway arms the guard for the next message', async ($, on) => {
   const { seen } = host(on, warm({ anchor_epoch: T0 / 1000 - 4000 }))
   await start($)
   expect(seen.runs[0]).toEqual(expect.arrayContaining(['--band', 'on']))
@@ -311,7 +311,7 @@ test('Send anyway arms the guard for the next message', async ($, on) => {
   }
 })
 
-test('a model or effort change the guard blocked offers Send anyway', async ($, on) => {
+test('a model or effort change the guard blocked offers Allow send anyway', async ($, on) => {
   const { seen } = host(on, warm())
   on('prompt.submit', (_$, e) => ({ text: e.text }))
   await start($)

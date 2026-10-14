@@ -32,9 +32,9 @@ export type Notice =
     }
   | { kind: 'miss'; expected: number; read: number; causes: readonly string[] }
 
-/** The guard as the band sees it: a block waiting for Send anyway, or an ack. */
+/** The guard as the band sees it: a block waiting for Allow send anyway, or an ack. */
 export type Gate = {
-  /** Send anyway was pressed: the guard lets the next message through. */
+  /** Allow send anyway was pressed: the guard lets the next message through. */
   isArmed: boolean
   /** Why the guard blocked the last send (`expiry`, `model_switch`, `model_effort`). */
   blocked: string | null

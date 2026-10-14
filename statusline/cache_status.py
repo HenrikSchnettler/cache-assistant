@@ -21,9 +21,9 @@ def main():
     ap.add_argument("--touch", action="store_true",
                     help="record a keep-alive cache hit that left no transcript line")
     ap.add_argument("--allow-next", action="store_true",
-                    help="the band's Send anyway: the guard lets the next message through")
+                    help="the band's Allow send anyway: the guard lets the next message through")
     ap.add_argument("--band", choices=("on", "off"), default=None,
-                    help="record whether the band (and its Send anyway) is drawn")
+                    help="record whether the band (and its Allow send anyway) is drawn")
     args = ap.parse_args()
 
     cwd = args.cwd or os.getcwd()
