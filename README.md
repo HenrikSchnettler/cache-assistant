@@ -12,7 +12,8 @@ re-write. Cache Assistant makes that window visible and gives you guardrails.
 - **Band above the prompt** (Claude Code mod, v2.1.288+) — everything the status
   line shows (tier, countdown, cold re-write size, model) plus **advice**: when
   the window has expired it says whether to just keep going (small re-write) or
-  to `/compact` / `/clear` first (large one); it warns before a large cache goes
+  to compact or clear first (large one), with **Compact** and **Clear** buttons
+  right there; it warns before a large cache goes
   cold, tells you how long switching back stays free after a **model switch**,
   and reports an **unexpected cache miss** (a request that did not read the warm
   prefix) with the setting that changed. A **keep-alive button** holds the cache

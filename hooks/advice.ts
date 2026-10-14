@@ -7,9 +7,11 @@ export type Advice = {
   text: string
   /** `warn`: acting first saves a large re-write; `calm`: nothing to do. */
   tone: 'warn' | 'calm'
-  /** A command worth putting in the prompt box, offered as a button. */
-  fill?: string
+  /** What the band offers as buttons, in order: the cures for a cold, large cache. */
+  actions?: readonly Action[]
 }
+
+export type Action = 'compact' | 'clear'
 
 export const fmtTokens = (n: number | null): string =>
   n === null ? '?' : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
@@ -79,6 +81,9 @@ export const advise = (input: {
     const size = `~${fmtTokens(note.tokens)} tokens`
     const route = `${shortModel(note.from)} → ${shortModel(note.to)}`
     if (note.warmUntilMs === null || note.warmUntilMs <= now) {
+      // The switch costs nothing extra; what the cold cache calls for still stands.
+      const cold = advise({ ...input, note: null })
+      if (cold?.tone === 'warn') return cold
       return { tone: 'calm', text: `Model switched ${route}. The old cache was already cold, so nothing extra is lost.` }
     }
     if (!isLarge(note.tokens, threshold)) {
@@ -119,10 +124,10 @@ export const advise = (input: {
 
     return {
       tone: 'warn',
-      fill: '/compact',
+      actions: ['compact', 'clear'],
       text:
-        `Sending now re-caches ${size} from cold. New topic: /clear. Same topic: /compact first, ` +
-        'then carry on with a small context. To send anyway, send the message twice.',
+        `Sending now re-caches ${size} from cold. Same topic: compact first and carry on with a small context. ` +
+        'New topic: clear. To send anyway, send the message twice.',
     }
   }
 

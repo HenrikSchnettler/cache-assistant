@@ -39,16 +39,23 @@ const warm = (over: Status = {}): Status => ({
 // The host the mod talks to: the status script, the model, the clock.
 const host = (on: On, first: Status) => {
   const clock = mock.clock(on, { now: T0 })
-  const seen = { status: first, runs: [] as string[][], forks: 0, readTokens: 119_000 }
+  const seen = { status: first, runs: [] as string[][], forks: 0, readTokens: 119_000, compacts: 0, commands: [] as string[] }
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('ui.toast', () => ({ value: undefined }))
-  on('prompt.fill', () => ({ isFilled: true }))
   on('classic.Stop', () => ({}))
   on('classic.SessionStart', () => ({}))
   on('classic.PostModelSwitch', () => ({}))
+  on('session.compact', () => {
+    seen.compacts += 1
+    return { messages: [{ role: 'user' as const, text: 'summary', toolUses: [] }] }
+  })
+  on('command.run', (_$, e) => {
+    seen.commands.push(e.command)
+    return { text: '' }
+  })
   on('process.run', (_$, e) => {
     seen.runs.push([...e.argv])
     return { value: { exitCode: 0, stdout: JSON.stringify(seen.status), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -74,22 +81,53 @@ test('a warm window shows tier, countdown and size, and no advice', async ($, on
   await start($)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
-    expect(await ui.find({ text: /cache 1h · 60m left · ~120\.0k cached/ })).toBeDefined()
+    expect(await ui.find({ text: 'cache 1h' })).toBeDefined()
+    expect(await ui.find({ text: '60m left' })).toBeDefined()
+    expect(await ui.find({ text: /~120\.0k cached/ })).toBeDefined()
+    expect(await ui.find({ key: 'keepalive' })).toBeDefined()
+    expect(await ui.find({ key: 'hide' })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: ADVICE })).toBeUndefined()
     await ui.unmount()
   }
 })
 
-test('expired and large: advises against sending and offers /compact', async ($, on) => {
+test('expired and large: advises against sending and offers compact and clear', async ($, on) => {
   host(on, warm({ anchor_epoch: T0 / 1000 - 4000 }))
   await start($)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
-    expect(await ui.find({ text: /EXPIRED · ~120\.0k to re-cache/ })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /\/compact first/ })).toBeDefined()
-    expect(await ui.find({ key: 'fill' })).toBeDefined()
+    expect(await ui.find({ text: 'expired' })).toBeDefined()
+    expect(await ui.find({ text: /~120\.0k to re-cache/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /compact first/ })).toBeDefined()
+    expect(await ui.find({ key: 'compact' })).toBeDefined()
+    expect(await ui.find({ key: 'clear' })).toBeDefined()
+    // Nothing left to keep alive: drawn as a state, not a control.
+    expect(await ui.find({ key: 'keepalive' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: 'keep-alive off' })).toBeDefined()
     await ui.unmount()
   }
+})
+
+test('the compact button compacts and re-reads the window', async ($, on) => {
+  const { seen } = host(on, warm({ anchor_epoch: T0 / 1000 - 4000 }))
+  await start($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const before = seen.runs.length
+  seen.status = { have_data: false, transcript: '/t/s.jsonl' }
+  await ui.press({ key: 'compact' })
+  expect(seen.compacts).toBe(1)
+  expect(seen.runs.length).toBe(before + 1)
+  expect(await ui.find({ key: 'compact' })).toBeUndefined()
+})
+
+test('the clear button runs /clear', async ($, on) => {
+  const { seen } = host(on, warm({ anchor_epoch: T0 / 1000 - 4000 }))
+  await start($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  seen.status = { have_data: false, transcript: null }
+  await ui.press({ key: 'clear' })
+  expect(seen.commands).toContain('clear')
+  expect(await ui.find({ key: 'clear' })).toBeUndefined()
 })
 
 test('expired but under the threshold: says to keep going', async ($, on) => {
@@ -97,7 +135,7 @@ test('expired but under the threshold: says to keep going', async ($, on) => {
   await start($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /just keep going/ })).toBeDefined()
-  expect(await ui.find({ key: 'fill' })).toBeUndefined()
+  expect(await ui.find({ key: 'compact' })).toBeUndefined()
 })
 
 test('the threshold is the plugin option', { options: { block_threshold_tokens: 10_000 } }, async ($, on) => {
@@ -112,7 +150,7 @@ test('the countdown redraws and warns before a large cache goes cold', async ($,
   await start($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await clock.advance(57 * 60_000)
-  expect(await ui.find({ text: /3:00 left/ })).toBeDefined()
+  expect(await ui.find({ text: '3:00 left' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /go cold in 3:00/ })).toBeDefined()
 })
 
@@ -195,5 +233,25 @@ test('a forked session shows the window it inherits before its first turn', asyn
     prompt_cache_likely_expired: true,
   })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await ui.find({ text: /cache 1h · EXPIRED · ~150\.0k to re-cache/ })).toBeDefined()
+  expect(await ui.find({ text: 'expired' })).toBeDefined()
+  expect(await ui.find({ text: /~150\.0k to re-cache/ })).toBeDefined()
+})
+
+test('a switch on a cold, large cache still offers compact and clear', async ($, on) => {
+  host(on, warm({ anchor_epoch: T0 / 1000 - 4000 }))
+  await start($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await $.classic.PostModelSwitch({
+    from_model: 'claude-fable-5',
+    to_model: 'claude-opus-5-5',
+    requested_model: 'opus',
+    source: 'picker',
+    context_tokens: 120_000,
+    prompt_cache_warm: false,
+    cache_ttl: '1h',
+    estimated_cache_write_usd: 1.2,
+    pricing: 'catalog',
+  })
+  expect(await ui.find({ type: 'Text', text: /re-caches ~120\.0k tokens from cold/ })).toBeDefined()
+  expect(await ui.find({ key: 'compact' })).toBeDefined()
 })

@@ -11,6 +11,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { CacheView, KeepAlive, Notice, SessionRef } from '../types'
+import type { Action } from './advice'
 import {
   advise,
   clockLabel,
@@ -145,6 +146,26 @@ const toggleKeepAlive = async ($: EngineInterface): Promise<string> => {
   if (remainingMs(view, now) <= 0) return 'The cache has already expired: nothing to keep alive.'
   await update($, keepAlive, () => ({ isOn: true, pings: 0 }))
   return `Cache keep-alive is on: a ping every ${fmtLeft(view.pingMs)}, at most ${maxPings}.`
+}
+
+// The band's cures for a cold, large cache: the same calls /compact and
+// /clear make. Our own hooks do not see a call this module makes, so the
+// window is re-read here.
+const cure = async ($: EngineInterface, action: Action) => {
+  try {
+    if (action === 'compact') {
+      const done = await $.session.compact()
+      if (done.skip !== undefined) $.ui.toast(`Not compacted: ${done.skip}`)
+    } else {
+      await $.command.run({ command: 'clear' })
+      await update($, keepAlive, () => ({ isOn: false, pings: 0 }))
+    }
+  } catch {
+    $.ui.toast(`Could not ${action} now: wait for the current turn to finish.`)
+    return
+  }
+  await update($, notice, () => null)
+  await refresh($)
 }
 
 const tick = async ($: EngineInterface) => {
@@ -308,50 +329,67 @@ export const register: Register = (on, options) => {
     const model = shortModel(await $.session.model())
     const { Box, Button, Text } = $.ui.resolve(e)
 
+    const isKnown = view !== null && view.ttlMs !== null
     const left = view ? remainingMs(view, now) : 0
-    const isExpired = view !== null && view.ttlMs !== null && left <= 0
-    const isClosing = view !== null && view.ttlMs !== null && !isExpired && left <= Math.max(30_000, view.ttlMs * 0.1)
-    const color = view === null || view.ttlMs === null ? undefined : isExpired ? 'red' : isClosing ? 'yellow' : 'green'
+    const isExpired = isKnown && left <= 0
+    const isClosing = isKnown && !isExpired && left <= Math.max(30_000, (view?.ttlMs ?? 0) * 0.1)
+    const color = !isKnown ? undefined : isExpired ? 'red' : isClosing ? 'yellow' : 'green'
     const tier = view?.tier ?? '?'
-    const headline =
-      view === null
-        ? '⚡ cache · warming…'
-        : view.ttlMs === null
-          ? `⚡ cache ${tier} · ?`
-          : isExpired
-            ? `⚡ cache ${tier} · EXPIRED · ~${fmtTokens(view.tokens)} to re-cache`
-            : `⚡ cache ${tier} · ${fmtLeft(left)} left · ~${fmtTokens(view.tokens)} cached`
+    const state = view === null ? 'warming…' : !isKnown ? '?' : isExpired ? 'expired' : `${fmtLeft(left)} left`
+    const size =
+      view === null || !isKnown ? null : `~${fmtTokens(view.tokens)} ${isExpired ? 'to re-cache' : 'cached'}`
     const advice = advise({ view, now, threshold, note, isKeepAliveOn: alive.isOn })
+    // Keep-alive can only hold a window that is still open.
+    const canKeepAlive = alive.isOn || (isKnown && !isExpired)
 
     return (
       <Box flexDirection="column" width={e.props.bodyColumns}>
-        <Box columnGap={1} flexWrap="wrap">
-          <Text color={color} dimColor={color === undefined}>
-            {headline}
-          </Text>
-          <Text dimColor>· {model}</Text>
-          <Button
-            key="keepalive"
-            label={alive.isOn ? `keep-alive on ${alive.pings}/${maxPings}` : 'keep-alive off'}
-            variant={alive.isOn ? 'primary' : 'secondary'}
-            onPress={async () => {
-              const said = await toggleKeepAlive($)
-              if (!(await read($, keepAlive)).isOn && !said.endsWith('is off.')) $.ui.toast(said)
-            }}
-          />
-          {advice?.fill !== undefined && (
-            <Button
-              key="fill"
-              label={advice.fill}
-              onPress={() => void $.prompt.fill({ text: advice.fill ?? '' })}
-            />
-          )}
-          <Button key="hide" label="hide" role="dismiss" onPress={() => update($, isHidden, () => true)} />
+        <Box justifyContent="space-between" columnGap={2} flexWrap="wrap">
+          <Box columnGap={1}>
+            <Text color={color} dimColor={color === undefined}>
+              ●
+            </Text>
+            <Text bold>cache {tier}</Text>
+            <Text color={color} dimColor={color === undefined} bold={isExpired}>
+              {state}
+            </Text>
+            {size !== null && <Text dimColor>· {size}</Text>}
+          </Box>
+          <Box columnGap={1}>
+            <Text dimColor>{model} ·</Text>
+            {canKeepAlive ? (
+              <Button
+                key="keepalive"
+                label={alive.isOn ? `keep-alive on ${alive.pings}/${maxPings}` : 'keep-alive off'}
+                variant={alive.isOn ? 'primary' : 'secondary'}
+                onPress={async () => {
+                  const said = await toggleKeepAlive($)
+                  if (!(await read($, keepAlive)).isOn && !said.endsWith('is off.')) $.ui.toast(said)
+                }}
+              />
+            ) : (
+              <Text dimColor>keep-alive off</Text>
+            )}
+          </Box>
         </Box>
         {advice !== null && (
-          <Text color={advice.tone === 'warn' ? 'yellow' : undefined} dimColor={advice.tone === 'calm'} wrap="wrap">
-            {advice.text}
-          </Text>
+          <Box paddingLeft={2}>
+            <Text color={advice.tone === 'warn' ? 'yellow' : undefined} dimColor={advice.tone === 'calm'} wrap="wrap">
+              {advice.text}
+            </Text>
+          </Box>
+        )}
+        {advice?.actions !== undefined && (
+          <Box paddingLeft={2} columnGap={1}>
+            {advice.actions.map((action, i) => (
+              <Button
+                key={action}
+                label={action === 'compact' ? 'Compact' : 'Clear'}
+                variant={i === 0 ? 'primary' : 'secondary'}
+                onPress={() => void cure($, action)}
+              />
+            ))}
+          </Box>
         )}
       </Box>
     )
