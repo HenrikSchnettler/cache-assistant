@@ -148,22 +148,18 @@ const toggleKeepAlive = async ($: EngineInterface): Promise<string> => {
   return `Cache keep-alive is on: a ping every ${fmtLeft(view.pingMs)}, at most ${maxPings}.`
 }
 
-// The band's cures for a cold, large cache: the same calls /compact and
-// /clear make. Our own hooks do not see a call this module makes, so the
-// window is re-read here.
+// The band's cures for a cold, large cache: /compact and /clear as if typed,
+// queued until the session is idle (a direct compaction is refused while the
+// engine still counts a turn, as after an interrupted one). Our own hooks do
+// not see what this module runs, so the window is re-read here.
 const cure = async ($: EngineInterface, action: Action) => {
   try {
-    if (action === 'compact') {
-      const done = await $.session.compact()
-      if (done.skip !== undefined) $.ui.toast(`Not compacted: ${done.skip}`)
-    } else {
-      await $.command.run({ command: 'clear' })
-      await update($, keepAlive, () => ({ isOn: false, pings: 0 }))
-    }
-  } catch {
-    $.ui.toast(`Could not ${action} now: wait for the current turn to finish.`)
+    await $.command.run({ command: action })
+  } catch (err) {
+    $.ui.toast(`Could not ${action}: ${err instanceof Error ? err.message : String(err)}`)
     return
   }
+  if (action === 'clear') await update($, keepAlive, () => ({ isOn: false, pings: 0 }))
   await update($, notice, () => null)
   await refresh($)
 }

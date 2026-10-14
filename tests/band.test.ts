@@ -39,7 +39,7 @@ const warm = (over: Status = {}): Status => ({
 // The host the mod talks to: the status script, the model, the clock.
 const host = (on: On, first: Status) => {
   const clock = mock.clock(on, { now: T0 })
-  const seen = { status: first, runs: [] as string[][], forks: 0, readTokens: 119_000, compacts: 0, commands: [] as string[] }
+  const seen = { status: first, runs: [] as string[][], forks: 0, readTokens: 119_000, commands: [] as string[] }
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('session.id', () => ({ value: 'sess-1' }))
@@ -48,10 +48,6 @@ const host = (on: On, first: Status) => {
   on('classic.Stop', () => ({}))
   on('classic.SessionStart', () => ({}))
   on('classic.PostModelSwitch', () => ({}))
-  on('session.compact', () => {
-    seen.compacts += 1
-    return { messages: [{ role: 'user' as const, text: 'summary', toolUses: [] }] }
-  })
   on('command.run', (_$, e) => {
     seen.commands.push(e.command)
     return { text: '' }
@@ -108,14 +104,14 @@ test('expired and large: advises against sending and offers compact and clear', 
   }
 })
 
-test('the compact button compacts and re-reads the window', async ($, on) => {
+test('the compact button runs /compact and re-reads the window', async ($, on) => {
   const { seen } = host(on, warm({ anchor_epoch: T0 / 1000 - 4000 }))
   await start($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   const before = seen.runs.length
   seen.status = { have_data: false, transcript: '/t/s.jsonl' }
   await ui.press({ key: 'compact' })
-  expect(seen.compacts).toBe(1)
+  expect(seen.commands).toContain('compact')
   expect(seen.runs.length).toBe(before + 1)
   expect(await ui.find({ key: 'compact' })).toBeUndefined()
 })
