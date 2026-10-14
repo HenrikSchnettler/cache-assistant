@@ -3,7 +3,7 @@
 // answered by the test, so this covers the mod's own hooks and drawing.
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
-import type { On } from 'claude-code'
+import type { On, RenderElement } from 'claude-code'
 
 const T0 = 1_800_000_000_000
 const SURFACES = ['terminal', 'desktop'] as const
@@ -39,7 +39,7 @@ const warm = (over: Status = {}): Status => ({
 // The host the mod talks to: the status script, the model, the clock.
 const host = (on: On, first: Status) => {
   const clock = mock.clock(on, { now: T0 })
-  const seen = { status: first, runs: [] as string[][], forks: 0, readTokens: 119_000, commands: [] as string[] }
+  const seen = { status: first, runs: [] as string[][], forks: 0, readTokens: 119_000, commands: [] as string[], below: { type: 'Box', children: [] } as RenderElement }
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('session.id', () => ({ value: 'sess-1' }))
@@ -48,6 +48,8 @@ const host = (on: On, first: Status) => {
   on('classic.Stop', () => ({}))
   on('classic.SessionStart', () => ({}))
   on('classic.PostModelSwitch', () => ({}))
+  // The engine's own band: nothing to draw unless a test puts another plugin's there.
+  on('ui.render', () => seen.below)
   on('command.run', (_$, e) => {
     seen.commands.push(e.command)
     return { text: '' }
@@ -344,6 +346,18 @@ test('an empty cache reads like every other state', async ($, on) => {
     expect(await ui.find({ type: 'Text', text: 'empty' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'fills with your next message' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /\?|warming/ })).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
+test("another plugin's band is drawn under ours, not replaced", async ($, on) => {
+  const { seen } = host(on, warm())
+  seen.below = { type: 'Text', children: ['other plugin band'] }
+  await start($)
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    expect(await ui.find({ text: 'cache 1h' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'other plugin band' })).toBeDefined()
     await ui.unmount()
   }
 })

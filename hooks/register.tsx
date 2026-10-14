@@ -238,6 +238,16 @@ const afterTurn = async ($: EngineInterface) => {
   await update($, notice, () => null)
 }
 
+// What the slot holds when nothing beneath draws: an empty Box (or nothing).
+const isEmptyBox = (tree: unknown): boolean => {
+  if (tree === null || tree === undefined) return true
+  if (typeof tree !== 'object') return false
+  const node = tree as { type?: string; children?: unknown }
+  const children = Array.isArray(node.children) ? node.children : node.children === undefined ? [] : [node.children]
+
+  return node.type === 'Box' && children.every(c => c === null || c === undefined || c === false || c === '')
+}
+
 export const register: Register = (on, options) => {
   threshold = Number(options.block_threshold_tokens ?? 50000)
   maxPings = Number(options.keepalive_max_pings ?? 12)
@@ -436,7 +446,11 @@ export const register: Register = (on, options) => {
     const gap = isRoomy ? 1.5 : 1
     const indent = isRoomy ? 2.5 : 2
 
-    return (
+    // The band is one slot that every plugin's hook draws into in turn: ours
+    // goes on top of whatever the plugins beneath (and the engine) draw, so
+    // another plugin's band stays visible.
+    const below = await next(e)
+    const ours = (
       // The desktop band is narrower than the terminal's columns: let it fill
       // its own width, so the right-hand group never wraps under the left.
       <Box flexDirection="column" width={isRoomy ? undefined : e.props.bodyColumns} rowGap={space} paddingY={space}>
@@ -494,6 +508,13 @@ export const register: Register = (on, options) => {
             ))}
           </Box>
         )}
+      </Box>
+    )
+
+    return isEmptyBox(below) ? ours : (
+      <Box flexDirection="column" rowGap={isRoomy ? 1 : 0}>
+        {ours}
+        {below}
       </Box>
     )
   })
