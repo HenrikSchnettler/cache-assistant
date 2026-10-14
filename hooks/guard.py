@@ -15,8 +15,11 @@ the *currently active* cache tier, with "send again to confirm" semantics:
      cache. This lets the user revert to the previous model/effort without
      having destroyed the cache.
 
-Re-sending the same prompt is the acknowledgement: it goes through unblocked,
-and control returns to the normal cache-state logic (the ack is not sticky).
+The acknowledgement is the band's "Send anyway" button (hooks/register.tsx),
+which records `ack` in the guard state: the next message goes through
+unblocked and normal logic resumes (the ack is not sticky). Where the band is
+not drawn (hidden, or a Claude Code without mods), re-sending the same prompt
+is the acknowledgement instead.
 
 Blocking uses `{"decision":"block","reason":...}` on exit 0, per the
 UserPromptSubmit hook contract.
@@ -39,21 +42,12 @@ PENDING_TTL = 900
 SENSOR_MAX_AGE = 30
 
 
-def _guard_path(session_id):
-    return os.path.join(cache_core.state_dir(), "guard-{}.json".format(
-        "".join(c for c in (session_id or "x") if c.isalnum() or c in "-_") or "x"))
-
-
 def _load_guard(session_id):
-    try:
-        with open(_guard_path(session_id)) as fh:
-            return json.load(fh)
-    except (OSError, ValueError):
-        return {}
+    return cache_core.load_guard(session_id)
 
 
 def _save_guard(session_id, data):
-    cache_core._atomic_write(_guard_path(session_id), data)
+    cache_core.save_guard(session_id, data)
 
 
 def _prompt_hash(prompt):
@@ -99,6 +93,12 @@ def _block(reason):
     sys.exit(0)
 
 
+def _proceed(has_band):
+    if has_band:
+        return "To proceed anyway, press Send anyway in the band above the prompt, then send."
+    return "To proceed anyway, send the same message again."
+
+
 def main():
     raw = sys.stdin.read()
     try:
@@ -118,11 +118,15 @@ def main():
     model, effort, _src = _current_selection(session_id)
     cur_setting = {"model_id": model, "effort_level": effort}
 
-    # --- Acknowledgement: same prompt re-sent after a block -> let it through.
+    # --- Acknowledgement: the band's Send anyway, or (without the band) the
+    # same prompt re-sent after a block -> let it through.
     pending = guard.get("pending")
     now = time.time()
-    if pending and (now - pending.get("at", 0)) <= PENDING_TTL \
-            and pending.get("prompt_hash") == _prompt_hash(prompt):
+    has_band = bool(guard.get("band"))
+    is_acked = guard.pop("ack", None) is not None
+    is_resent = not has_band and pending and (now - pending.get("at", 0)) <= PENDING_TTL \
+        and pending.get("prompt_hash") == _prompt_hash(prompt)
+    if is_acked or is_resent:
         # This send is the confirmation. Clear the block, commit current setting,
         # and return to normal logic on subsequent sends.
         guard["pending"] = None
@@ -160,8 +164,8 @@ def main():
             "first message under the new model.\n\n"
             "→ If this was a mistake, switch back now and your warm cache is "
             "untouched.\n"
-            "→ To proceed anyway, send the same message again."
-            .format(switch.get("from"), switch.get("to"), rewrite))
+            "→ {}"
+            .format(switch.get("from"), switch.get("to"), rewrite, _proceed(has_band)))
 
     # --- Guard 1: model / effort change while the cache is still warm ---------
     if committed and model and cache_warm and large:
@@ -185,8 +189,8 @@ def main():
                 "message under the new setting.\n\n"
                 "→ If this was a mistake, switch back to the previous "
                 "setting now and your warm cache is untouched.\n"
-                "→ To proceed anyway, send the same message again."
-                .format(" and ".join(what), rewrite))
+                "→ {}"
+                .format(" and ".join(what), rewrite, _proceed(has_band)))
 
     # --- Guard 2: expired cache window ---------------------------------------
     if state.get("have_data") and state.get("expired") and large:
@@ -198,8 +202,8 @@ def main():
             "⚡ Cache Assistant: your {} prompt-cache window has EXPIRED. "
             "Sending now re-writes ~{} tokens to the cache from cold (a slower, "
             "more expensive turn).\n\n"
-            "→ To proceed, send the same message again."
-            .format(tier, rewrite))
+            "→ {}"
+            .format(tier, rewrite, _proceed(has_band)))
 
     # --- Normal path: allow and commit the current setting as the baseline ---
     guard["committed"] = cur_setting

@@ -99,9 +99,12 @@ Cold-rewrite token estimate (shown by the status line and guards) =
   `$TMPDIR/cache-assistant`. Holds `state-<session>.json` (cache memo + sensor)
   and `guard-<session>.json` (guard baseline + pending-ack). Writes are atomic
   (`os.replace`) and self-correcting, so a lost write just means a re-parse.
-- **Guard semantics.** "Send again to confirm": a block records
-  `{reason, prompt_hash}`; the identical re-send is the acknowledgement (allowed,
-  then normal logic resumes — not sticky). The model/effort guard blocks only
+- **Guard semantics.** A block records `{reason, prompt_hash}`; the band shows
+  it with a **Send anyway** button, which records `ack` in the guard state
+  (`cache_status.py --allow-next`); the next message is allowed and the ack spent
+  (not sticky). The mod records `band: true` at session start (`--band on`, off
+  while hidden): only without the band is the identical re-send the
+  acknowledgement. The model/effort guard blocks only
   while the current selection differs from the setting the last message was sent
   under, so reverting before sending clears it with the cache intact. The guard
   **never** blocks slash-commands, empty prompts, or keep-alive pings (marked with

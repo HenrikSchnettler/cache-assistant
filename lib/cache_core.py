@@ -364,6 +364,40 @@ def record_touch(session_id, now=None):
     _save_state(session_id, full)
 
 
+# --- guard state (guard-<session>.json), shared with the band ---------------
+
+def guard_path(session_id):
+    safe = "".join(c for c in (session_id or "x") if c.isalnum() or c in "-_")
+    return os.path.join(state_dir(), "guard-{}.json".format(safe or "x"))
+
+
+def load_guard(session_id):
+    try:
+        with open(guard_path(session_id)) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_guard(session_id, data):
+    _atomic_write(guard_path(session_id), data)
+
+
+def allow_next(session_id, now=None):
+    """The band's "Send anyway": the guard lets the next message through once."""
+    guard = load_guard(session_id)
+    guard["ack"] = {"at": time.time() if now is None else now}
+    save_guard(session_id, guard)
+
+
+def set_band(session_id, is_shown):
+    """Whether the band (and its Send anyway button) is drawn for this session.
+    Without it the guard falls back to "send the same message again"."""
+    guard = load_guard(session_id)
+    guard["band"] = bool(is_shown)
+    save_guard(session_id, guard)
+
+
 # --- settings sensor (model / effort), written by the status line ----------
 
 def write_settings_state(session_id, model_id, effort_level, now=None):

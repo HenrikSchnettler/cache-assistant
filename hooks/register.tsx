@@ -10,7 +10,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { Busy, CacheView, KeepAlive, Notice, SessionRef } from '../types'
+import type { Busy, CacheView, Gate, KeepAlive, Notice, SessionRef } from '../types'
 import type { Action } from './advice'
 import {
   advise,
@@ -33,6 +33,7 @@ const notice = atom({ plugin: 'cache-assistant', key: 'notice' } as const, null)
 const isHidden = atom({ plugin: 'cache-assistant', key: 'isHidden' } as const, false)
 const session = atom({ plugin: 'cache-assistant', key: 'session' } as const, null)
 const busy = atom({ plugin: 'cache-assistant', key: 'busy' } as const, null)
+const gate = atom({ plugin: 'cache-assistant', key: 'gate' } as const, { isArmed: false, blocked: null })
 const frame = atom({ plugin: 'cache-assistant', key: 'frame' } as const, 0)
 
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -42,6 +43,8 @@ const BUSY_LABEL: Record<Busy, string> = {
   clearing: 'Clearing the conversation…',
 }
 
+const ACTION_LABEL: Record<Action, string> = { compact: 'Compact', clear: 'Clear', send: 'Send anyway' }
+
 const PING = 'Cache keep-alive ping. Reply with the single word "pong" and nothing else.'
 
 type StatusJson = {
@@ -50,6 +53,8 @@ type StatusJson = {
   ttl_seconds?: number | null
   anchor_epoch?: number | null
   rewrite_tokens?: number | null
+  armed?: boolean
+  blocked?: string | null
   ping_interval_seconds?: number | null
   transcript?: string | null
   miss?: {
@@ -86,14 +91,16 @@ const setBusy = async ($: EngineInterface, next: Busy | null) => {
 }
 
 // Reads the window from the transcript through the plugin's own engine.
-// `touch` first records a keep-alive hit that left no transcript line.
-const refresh = async ($: EngineInterface, touch = false): Promise<CacheView | null> => {
+// `flags` are cache_status.py's writes made first: `--touch` records a
+// keep-alive hit that left no transcript line, `--allow-next` the band's Send
+// anyway, `--band on|off` whether that button is drawn.
+const refresh = async ($: EngineInterface, ...flags: string[]): Promise<CacheView | null> => {
   const id = await $.session.id()
   const known = await read($, session)
   const transcript = known?.id === id ? known.transcript : null
   const argv = ['python3', `${$.plugin.root}/statusline/cache_status.py`, '--json', '--session', id]
   if (transcript) argv.push('--transcript', transcript)
-  if (touch) argv.push('--touch')
+  argv.push(...flags)
 
   let status: StatusJson
   try {
@@ -128,6 +135,11 @@ const refresh = async ($: EngineInterface, touch = false): Promise<CacheView | n
       : null
   await update($, cache, () => view)
   await update($, clock, () => '')
+  const known_gate = await read($, gate)
+  const next_gate: Gate = { isArmed: status.armed === true, blocked: status.blocked ?? null }
+  if (known_gate.isArmed !== next_gate.isArmed || known_gate.blocked !== next_gate.blocked) {
+    await update($, gate, () => next_gate)
+  }
 
   return view
 }
@@ -150,7 +162,7 @@ const ping = async ($: EngineInterface) => {
       await stopKeepAlive($, reply.isAnswered ? 'the cache was already cold' : reply.reason)
       return
     }
-    await refresh($, true)
+    await refresh($, '--touch')
     const used = (await read($, keepAlive)).pings + 1
     await update($, keepAlive, (k: KeepAlive) => ({ ...k, pings: used }))
     if (used >= maxPings) await stopKeepAlive($, `${used} pings sent without a message from you`)
@@ -178,9 +190,13 @@ const toggleKeepAlive = async ($: EngineInterface): Promise<string> => {
 // not see what this module runs, so the window is re-read here.
 const cure = async ($: EngineInterface, action: Action) => {
   if ((await read($, busy)) !== null) return
+  if (action === 'send') {
+    await refresh($, '--allow-next')
+    return
+  }
   await setBusy($, action === 'compact' ? 'compacting' : 'clearing')
   try {
-    await $.command.run({ command: action })
+    await $.command.run({ command: action === 'compact' ? 'compact' : 'clear' })
   } catch (err) {
     $.ui.toast(`Could not ${action}: ${err instanceof Error ? err.message : String(err)}`)
     return
@@ -237,7 +253,7 @@ export const register: Register = (on, options) => {
     })
     // A reload drops the animation's timer: start from idle.
     await update($, busy, () => null)
-    const view = await refresh($)
+    const view = await refresh($, '--band', (await read($, isHidden)) ? 'off' : 'on')
     missSeenMs = view?.miss?.atMs ?? 0
     $.clock.every(1000, () => void tick($))
 
@@ -261,8 +277,18 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'cache-band' }, async $ => {
     const hidden = !(await read($, isHidden))
     await update($, isHidden, () => hidden)
+    // Hidden, the band offers no Send anyway: the guard takes a re-send instead.
+    await refresh($, '--band', hidden ? 'off' : 'on')
 
     return { text: hidden ? 'Cache Assistant band hidden.' : 'Cache Assistant band shown.' }
+  })
+
+  // A send the guard blocked starts no turn: read the block for the band.
+  on('prompt.submit', async ($, e, next) => {
+    const submitted = await next(e)
+    await refresh($)
+
+    return submitted
   })
 
   on('turn.start', async ($, e, next) => {
@@ -380,8 +406,10 @@ export const register: Register = (on, options) => {
     const state =
       view === null ? 'warming…' : isInUse ? 'in use' : !isKnown ? '?' : isExpired ? 'expired' : `${fmtLeft(left)} left`
     const size =
-      view === null || !isKnown ? null : `~${fmtTokens(view.tokens)} ${isExpired ? 'to re-cache' : 'cached'}`
-    const advice = isInUse ? null : advise({ view, now, threshold, note, isKeepAliveOn: alive.isOn })
+      view === null || !isKnown || isInUse ? null : `~${fmtTokens(view.tokens)} ${isExpired ? 'to re-cache' : 'cached'}`
+    const advice = isInUse
+      ? null
+      : advise({ view, now, threshold, note, isKeepAliveOn: alive.isOn, gate: await read($, gate) })
     // Keep-alive can only hold a window that is still open, and is left alone
     // while the session is busy (a running turn keeps the cache warm itself).
     const canKeepAlive = !isInUse && (alive.isOn || (isKnown && !isExpired))
@@ -394,9 +422,11 @@ export const register: Register = (on, options) => {
     const indent = isRoomy ? 2.5 : 2
 
     return (
-      <Box flexDirection="column" width={e.props.bodyColumns} rowGap={space} paddingY={space}>
-        <Box justifyContent="space-between" columnGap={gap * 2} flexWrap="wrap">
-          <Box columnGap={gap}>
+      // The desktop band is narrower than the terminal's columns: let it fill
+      // its own width, so the right-hand group never wraps under the left.
+      <Box flexDirection="column" width={isRoomy ? undefined : e.props.bodyColumns} rowGap={space} paddingY={space}>
+        <Box justifyContent="space-between" columnGap={gap * 2}>
+          <Box columnGap={gap} flexShrink={1}>
             <Text color={color} dimColor={color === undefined}>
               ●
             </Text>
@@ -406,7 +436,7 @@ export const register: Register = (on, options) => {
             </Text>
             {size !== null && <Text dimColor>{size}</Text>}
           </Box>
-          <Box columnGap={gap}>
+          <Box columnGap={gap} flexShrink={0}>
             <Text dimColor>{model}</Text>
             {canKeepAlive ? (
               <Button
@@ -423,8 +453,9 @@ export const register: Register = (on, options) => {
             )}
           </Box>
         </Box>
+        {/* Leading: the spinner stands in the dot's column, its label under "cache". */}
         {doing !== null && (
-          <Box paddingLeft={indent} columnGap={1}>
+          <Box columnGap={gap}>
             <Text color="cyan">{SPINNER[step % SPINNER.length]}</Text>
             <Text dimColor>{BUSY_LABEL[doing]}</Text>
           </Box>
@@ -441,7 +472,7 @@ export const register: Register = (on, options) => {
             {advice.actions.map((action, i) => (
               <Button
                 key={action}
-                label={action === 'compact' ? 'Compact' : 'Clear'}
+                label={ACTION_LABEL[action]}
                 variant={i === 0 ? 'primary' : 'secondary'}
                 onPress={() => void cure($, action)}
               />

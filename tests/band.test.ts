@@ -97,6 +97,8 @@ test('expired and large: advises against sending and offers compact and clear', 
     expect(await ui.find({ type: 'Text', text: /compact first/ })).toBeDefined()
     expect(await ui.find({ key: 'compact' })).toBeDefined()
     expect(await ui.find({ key: 'clear' })).toBeDefined()
+    expect(await ui.find({ key: 'send' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /twice/ })).toBeUndefined()
     // Nothing left to keep alive: drawn as a state, not a control.
     expect(await ui.find({ key: 'keepalive' })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: 'keep-alive off' })).toBeDefined()
@@ -288,4 +290,46 @@ test('a compaction shows its own placeholder and locks the buttons', async ($, o
   await $.session.compact({ trigger: 'manual', messages: [summary] })
   expect(during).toEqual([true, true])
   expect(await ui.find({ type: 'Text', text: 'Compacting the conversation…' })).toBeUndefined()
+})
+
+test('Send anyway arms the guard for the next message', async ($, on) => {
+  const { seen } = host(on, warm({ anchor_epoch: T0 / 1000 - 4000 }))
+  await start($)
+  expect(seen.runs[0]).toEqual(expect.arrayContaining(['--band', 'on']))
+  for (const surface of SURFACES) {
+    // The ack is spent by a message; the next read shows the button again.
+    seen.status = warm({ anchor_epoch: T0 / 1000 - 4000, armed: false })
+    await $.classic.Stop({ stop_hook_active: false })
+    const ui = await $.ui.mount({ ...BAND, surface })
+    seen.status = warm({ anchor_epoch: T0 / 1000 - 4000, armed: true })
+    await ui.press({ key: 'send' })
+    expect(seen.runs.at(-1)).toContain('--allow-next')
+    expect(await ui.find({ type: 'Text', text: /your next message goes through/ })).toBeDefined()
+    expect(await ui.find({ key: 'send' })).toBeUndefined()
+    expect(await ui.find({ key: 'compact' })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
+test('a model or effort change the guard blocked offers Send anyway', async ($, on) => {
+  const { seen } = host(on, warm())
+  on('prompt.submit', (_$, e) => ({ text: e.text }))
+  await start($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  seen.status = warm({ blocked: 'model_effort' })
+  await $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } })
+  expect(await ui.find({ type: 'Text', text: /You changed the model or effort/ })).toBeDefined()
+  expect(await ui.find({ key: 'send' })).toBeDefined()
+})
+
+test('the hidden band hands the acknowledgement back to a re-send', async ($, on) => {
+  const { seen } = host(on, warm())
+  await start($)
+  await $.command.run({
+    command: 'cache-band',
+    args: '',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: false, columns: 120 },
+  })
+  expect(seen.runs.at(-1)).toEqual(expect.arrayContaining(['--band', 'off']))
 })
