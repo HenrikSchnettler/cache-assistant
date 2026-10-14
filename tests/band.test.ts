@@ -79,6 +79,7 @@ test('a warm window shows tier, countdown and size, and no advice', async ($, on
   await start($)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
+    expect(await ui.find({ key: 'divider' })).toBeUndefined()
     expect(await ui.find({ text: 'cache 1h' })).toBeDefined()
     expect(await ui.find({ text: '60m left' })).toBeDefined()
     expect(await ui.find({ text: /~120\.0k cached/ })).toBeDefined()
@@ -264,11 +265,13 @@ test('while Claude works the band shows a placeholder and no controls', async ($
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
     await $.turn.start({ text: 'hi', turnId: 't1' })
-    expect(await ui.find({ type: 'Text', text: 'Claude is working…' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Available when Claude is done' })).toBeDefined()
+    // Only a compaction is animated.
+    expect(await ui.find({ type: 'Text', text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/ })).toBeUndefined()
     expect(await ui.find({ text: 'in use' })).toBeDefined()
     for (const key of ['compact', 'clear', 'keepalive']) expect(await ui.find({ key })).toBeUndefined()
     await $.turn.complete({ reason: 'aborted', answer: '', durationMs: 5, isAborted: true, turnId: 't1' })
-    expect(await ui.find({ type: 'Text', text: 'Claude is working…' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: 'Available when Claude is done' })).toBeUndefined()
     expect(await ui.find({ key: 'compact' })).toBeDefined()
     await ui.unmount()
   }
@@ -358,6 +361,7 @@ test("another plugin's band is drawn under ours, not replaced", async ($, on) =>
     const ui = await $.ui.mount({ ...BAND, surface })
     expect(await ui.find({ text: 'cache 1h' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'other plugin band' })).toBeDefined()
+    expect(await ui.find({ key: 'divider' })).toBeDefined()
     await ui.unmount()
   }
 })

@@ -38,7 +38,7 @@ const frame = atom({ plugin: 'cache-assistant', key: 'frame' } as const, 0)
 
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 const BUSY_LABEL: Record<Busy, string> = {
-  working: 'Claude is working…',
+  working: 'Available when Claude is done',
   compacting: 'Compacting the conversation…',
   clearing: 'Clearing the conversation…',
 }
@@ -77,12 +77,13 @@ let missSeenMs = 0
 // Settings changed since the last turn: the suspects for a cache miss.
 let changed: string[] = []
 
-// What the session is busy with: the band draws an animated placeholder in
-// place of its controls, so nothing can be pressed that would collide.
+// What the session is busy with: the band draws a placeholder in place of its
+// controls, so nothing can be pressed that would collide. Only a compaction,
+// the one wait the person started and watches, is animated.
 const setBusy = async ($: EngineInterface, next: Busy | null) => {
   if ((await read($, busy)) === next) return
   await update($, busy, () => next)
-  if (next === null) {
+  if (next !== 'compacting') {
     spinner?.cancel()
     spinner = null
   } else if (spinner === null) {
@@ -483,9 +484,14 @@ export const register: Register = (on, options) => {
           </Box>
         </Box>
         {/* Leading: the spinner stands in the dot's column, its label under "cache". */}
-        {doing !== null && (
+        {doing === 'compacting' && (
           <Box columnGap={gap}>
             <Text color="cyan">{SPINNER[step % SPINNER.length]}</Text>
+            <Text dimColor>{BUSY_LABEL[doing]}</Text>
+          </Box>
+        )}
+        {doing !== null && doing !== 'compacting' && (
+          <Box paddingLeft={indent}>
             <Text dimColor>{BUSY_LABEL[doing]}</Text>
           </Box>
         )}
@@ -511,9 +517,18 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
-    return isEmptyBox(below) ? ours : (
-      <Box flexDirection="column" rowGap={isRoomy ? 1 : 0}>
+    if (isEmptyBox(below)) return ours
+
+    // Another plugin's band follows ours: a thin rule keeps the two apart. The
+    // rule is longer than any width and cut to one row by its box.
+    return (
+      <Box flexDirection="column" rowGap={space}>
         {ours}
+        <Box key="divider" height={1} overflow="hidden">
+          <Text dimColor wrap="wrap">
+            {'─'.repeat(400)}
+          </Text>
+        </Box>
         {below}
       </Box>
     )
