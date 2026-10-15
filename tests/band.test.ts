@@ -80,6 +80,7 @@ test('a warm window shows tier, countdown and size, and no advice', async ($, on
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
     expect(await ui.find({ key: 'divider' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /^─+$/ })).toBeUndefined()
     expect(await ui.find({ text: 'cache 1h' })).toBeDefined()
     expect(await ui.find({ text: '60m left' })).toBeDefined()
     expect(await ui.find({ text: /~120\.0k cached/ })).toBeDefined()
@@ -361,7 +362,15 @@ test("another plugin's band is drawn under ours, not replaced", async ($, on) =>
     const ui = await $.ui.mount({ ...BAND, surface })
     expect(await ui.find({ text: 'cache 1h' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'other plugin band' })).toBeDefined()
-    expect(await ui.find({ key: 'divider' })).toBeDefined()
+    // One rule between the two bands, never wider than the band: on a
+    // terminal exactly its columns, on a desktop the surface's own rule.
+    if (surface === 'terminal') {
+      expect(await ui.findAll({ type: 'Text', text: /^─+$/ })).toHaveLength(1)
+      expect(await ui.find({ type: 'Text', text: /^─+$/ })).toMatchObject({ text: '─'.repeat(BAND.props.bodyColumns) })
+    } else {
+      expect(await ui.findAll({ type: 'Markdown', text: '---' })).toHaveLength(1)
+      expect(await ui.find({ type: 'Text', text: /─/ })).toBeUndefined()
+    }
     await ui.unmount()
   }
 })

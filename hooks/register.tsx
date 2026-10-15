@@ -400,7 +400,7 @@ export const register: Register = (on, options) => {
     const note = await read($, notice)
     const now = await $.clock.now()
     const model = shortModel(await $.session.model())
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const { Box, Button, Markdown, Text } = $.ui.resolve(e)
 
     // A turn already running when this module loaded has set no state yet.
     const doing = (await read($, busy)) ?? (e.props.isWorking ? 'working' : null)
@@ -519,16 +519,18 @@ export const register: Register = (on, options) => {
 
     if (isEmptyBox(below)) return ours
 
-    // Another plugin's band follows ours: a thin rule keeps the two apart. The
-    // rule is longer than any width and cut to one row by its box.
+    // Another plugin's band follows ours: a thin rule keeps the two apart. On
+    // a terminal it is exactly the band's columns, so it neither wraps nor is
+    // cut with an ellipsis; a desktop band is narrower than its columns and
+    // draws in proportional type, so it gets the surface's own rule instead.
     return (
       <Box flexDirection="column" rowGap={space}>
         {ours}
-        <Box key="divider" height={1} overflow="hidden">
-          <Text dimColor wrap="wrap">
-            {'─'.repeat(400)}
-          </Text>
-        </Box>
+        {isRoomy ? (
+          <Markdown key="divider" text="---" dimColor />
+        ) : (
+          <Text dimColor>{'─'.repeat(e.props.bodyColumns)}</Text>
+        )}
         {below}
       </Box>
     )
