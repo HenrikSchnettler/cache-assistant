@@ -401,6 +401,8 @@ export const register: Register = (on, options) => {
     const now = await $.clock.now()
     const model = shortModel(await $.session.model())
     const { Box, Button, Markdown, Text } = $.ui.resolve(e)
+    // The desktop draws "primary" white; the native rows above the prompt use its default gray button.
+    const main = e.surface === 'desktop' ? 'secondary' : 'primary'
 
     // A turn already running when this module loaded has set no state yet.
     const doing = (await read($, busy)) ?? (e.props.isWorking ? 'working' : null)
@@ -412,20 +414,19 @@ export const register: Register = (on, options) => {
     const isInUse = doing !== null
     const isExpired = isKnown && !isInUse && left <= 0
     const isClosing = isKnown && !isInUse && !isExpired && left <= Math.max(30_000, (view?.ttlMs ?? 0) * 0.1)
-    const color = isInUse ? 'cyan' : !isKnown ? undefined : isExpired ? 'red' : isClosing ? 'yellow' : 'green'
+    const color = isInUse ? 'suggestion' : !isKnown ? undefined : isExpired ? 'error' : isClosing ? 'warning' : 'success'
     // Nothing cached yet (a new session, after /clear or a compaction): the same
-    // row as every other state, an empty dot and what fills it.
+    // row as every other state, and what fills it.
     const isEmpty = view === null
-    const title = view?.tier ? `cache ${view.tier}` : 'cache'
-    const state = isInUse
-      ? 'in use'
+    const headline = isInUse
+      ? 'Cache in use'
       : isEmpty
-        ? 'empty'
+        ? 'Cache empty'
         : !isKnown
-          ? 'tier unknown'
+          ? 'Cache tier unknown'
           : isExpired
-            ? 'expired'
-            : `${fmtLeft(left)} left`
+            ? 'Cache expired'
+            : `Cache warm · ${fmtLeft(left)} left`
     const size = isEmpty
       ? isInUse
         ? null
@@ -439,13 +440,18 @@ export const register: Register = (on, options) => {
     // Keep-alive can only hold a window that is still open, and is left alone
     // while the session is busy (a running turn keeps the cache warm itself).
     const canKeepAlive = !isInUse && (alive.isOn || (isKnown && !isExpired))
-    const keepAliveLabel = alive.isOn ? `keep-alive on ${alive.pings}/${maxPings}` : 'keep-alive off'
-    // A desktop draws in proportional type, where terminal spacing reads as
-    // cramped; half a cell there evens its own band padding out to all sides.
+    const keepAliveState = alive.isOn ? `keep-alive on ${alive.pings}/${maxPings}` : 'keep-alive off'
+    const detail = [
+      view?.tier ? `${view.tier} tier` : null,
+      size,
+      model,
+      canKeepAlive ? null : keepAliveState,
+    ]
+      .filter(Boolean)
+      .join(' · ')
+    // A desktop draws in proportional type, where a band without vertical
+    // padding reads as cramped.
     const isRoomy = e.surface !== 'terminal'
-    const space = isRoomy ? 0.5 : 0
-    const gap = isRoomy ? 1.5 : 1
-    const indent = isRoomy ? 2.5 : 2
 
     // The band is one slot that every plugin's hook draws into in turn: ours
     // goes on top of whatever the plugins beneath (and the engine) draw, so
@@ -453,67 +459,56 @@ export const register: Register = (on, options) => {
     const below = await next(e)
     const ours = (
       // The desktop band is narrower than the terminal's columns: let it fill
-      // its own width, so the right-hand group never wraps under the left.
-      <Box flexDirection="column" width={isRoomy ? undefined : e.props.bodyColumns} rowGap={space} paddingY={space}>
-        <Box justifyContent="space-between" columnGap={gap * 2}>
-          <Box columnGap={gap} flexShrink={1}>
+      // its own width, so the actions never wrap under the text.
+      <Box alignItems="center" gap={2} paddingY={isRoomy ? 0.5 : 0} width={isRoomy ? undefined : e.props.bodyColumns}>
+        <Box flexGrow={1} flexShrink={1} minWidth={0} gap={1}>
+          <Box flexShrink={0}>
             <Text color={color} dimColor={color === undefined}>
-              {isEmpty ? '○' : '●'}
+              ◷
             </Text>
-            <Text bold>{title}</Text>
-            <Text color={color} dimColor={color === undefined} bold={isExpired}>
-              {state}
-            </Text>
-            {size !== null && <Text dimColor>{size}</Text>}
           </Box>
-          <Box columnGap={gap} flexShrink={0}>
-            <Text dimColor>{model}</Text>
-            {canKeepAlive ? (
-              <Button
-                key="keepalive"
-                label={keepAliveLabel}
-                variant={alive.isOn ? 'primary' : 'secondary'}
-                onPress={async () => {
-                  const said = await toggleKeepAlive($)
-                  if (!(await read($, keepAlive)).isOn && !said.endsWith('is off.')) $.ui.toast(said)
-                }}
-              />
-            ) : (
-              <Text dimColor>{keepAliveLabel}</Text>
+          <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+            <Text color={color} dimColor={color === undefined} wrap="wrap">
+              {headline}
+            </Text>
+            {detail !== '' && (
+              <Text dimColor wrap="wrap">
+                {detail}
+              </Text>
+            )}
+            {advice !== null && (
+              <Text color={advice.tone === 'warn' ? 'warning' : undefined} dimColor={advice.tone === 'calm'} wrap="wrap">
+                {advice.text}
+              </Text>
             )}
           </Box>
         </Box>
-        {/* Leading: the spinner stands in the dot's column, its label under "cache". */}
-        {doing === 'compacting' && (
-          <Box columnGap={gap}>
-            <Text color="cyan">{SPINNER[step % SPINNER.length]}</Text>
-            <Text dimColor>{BUSY_LABEL[doing]}</Text>
-          </Box>
-        )}
-        {doing !== null && doing !== 'compacting' && (
-          <Box paddingLeft={indent}>
-            <Text dimColor>{BUSY_LABEL[doing]}</Text>
-          </Box>
-        )}
-        {advice !== null && (
-          <Box paddingLeft={indent}>
-            <Text color={advice.tone === 'warn' ? 'yellow' : undefined} dimColor={advice.tone === 'calm'} wrap="wrap">
-              {advice.text}
+        <Box flexShrink={0} alignItems="center" gap={1}>
+          {doing === 'compacting' && (
+            <Text color="suggestion" bold>
+              {SPINNER[step % SPINNER.length]} {BUSY_LABEL[doing]}
             </Text>
-          </Box>
-        )}
-        {advice?.actions !== undefined && (
-          <Box paddingLeft={indent} columnGap={gap}>
-            {advice.actions.map((action, i) => (
-              <Button
-                key={action}
-                label={ACTION_LABEL[action]}
-                variant={i === 0 ? 'primary' : 'secondary'}
-                onPress={() => void cure($, action)}
-              />
-            ))}
-          </Box>
-        )}
+          )}
+          {doing !== null && doing !== 'compacting' && <Text dimColor>{BUSY_LABEL[doing]}</Text>}
+          {advice?.actions?.map((action, i) => (
+            <Button
+              key={action}
+              label={ACTION_LABEL[action]}
+              variant={i === 0 ? main : undefined}
+              onPress={() => void cure($, action)}
+            />
+          ))}
+          {canKeepAlive && (
+            <Button
+              key="keepalive"
+              label={alive.isOn ? `Keep-alive on ${alive.pings}/${maxPings}` : 'Keep-alive off'}
+              onPress={async () => {
+                const said = await toggleKeepAlive($)
+                if (!(await read($, keepAlive)).isOn && !said.endsWith('is off.')) $.ui.toast(said)
+              }}
+            />
+          )}
+        </Box>
       </Box>
     )
 
@@ -524,12 +519,14 @@ export const register: Register = (on, options) => {
     // cut with an ellipsis; a desktop band is narrower than its columns and
     // draws in proportional type, so it gets the surface's own rule instead.
     return (
-      <Box flexDirection="column" rowGap={space}>
+      <Box flexDirection="column">
         {ours}
         {isRoomy ? (
           <Markdown key="divider" text="---" dimColor />
         ) : (
-          <Text dimColor>{'─'.repeat(e.props.bodyColumns)}</Text>
+          <Text key="divider" dimColor wrap="truncate">
+            {'─'.repeat(e.props.bodyColumns)}
+          </Text>
         )}
         {below}
       </Box>

@@ -81,10 +81,10 @@ test('a warm window shows tier, countdown and size, and no advice', async ($, on
     const ui = await $.ui.mount({ ...BAND, surface })
     expect(await ui.find({ key: 'divider' })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: /^─+$/ })).toBeUndefined()
-    expect(await ui.find({ text: 'cache 1h' })).toBeDefined()
-    expect(await ui.find({ text: '60m left' })).toBeDefined()
-    expect(await ui.find({ text: /~120\.0k cached/ })).toBeDefined()
-    expect(await ui.find({ key: 'keepalive' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '◷' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Cache warm · 60m left' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '1h tier · ~120.0k cached · opus-5-5' })).toBeDefined()
+    expect(await ui.find({ key: 'keepalive' })).toMatchObject({ props: { label: 'Keep-alive off' } })
     expect(await ui.find({ key: 'hide' })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: ADVICE })).toBeUndefined()
     await ui.unmount()
@@ -96,16 +96,16 @@ test('expired and large: advises against sending and offers compact and clear', 
   await start($)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
-    expect(await ui.find({ text: 'expired' })).toBeDefined()
-    expect(await ui.find({ text: /~120\.0k to re-cache/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Cache expired' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /~120\.0k to re-cache/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /compact first/ })).toBeDefined()
     expect(await ui.find({ key: 'compact' })).toBeDefined()
     expect(await ui.find({ key: 'clear' })).toBeDefined()
     expect(await ui.find({ key: 'send' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /twice/ })).toBeUndefined()
-    // Nothing left to keep alive: drawn as a state, not a control.
+    // Nothing left to keep alive: drawn as a state in the detail line, not a control.
     expect(await ui.find({ key: 'keepalive' })).toBeUndefined()
-    expect(await ui.find({ type: 'Text', text: 'keep-alive off' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '1h tier · ~120.0k to re-cache · opus-5-5 · keep-alive off' })).toBeDefined()
     await ui.unmount()
   }
 })
@@ -152,7 +152,7 @@ test('the countdown redraws and warns before a large cache goes cold', async ($,
   await start($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await clock.advance(57 * 60_000)
-  expect(await ui.find({ text: '3:00 left' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Cache warm · 3:00 left' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /go cold in 3:00/ })).toBeDefined()
 })
 
@@ -161,14 +161,14 @@ test('keep-alive pings one interval after the last touch, without a turn', async
   await start($)
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   await ui.press({ key: 'keepalive' })
-  expect(await ui.find({ text: /keep-alive on 0\/12/ })).toBeDefined()
+  expect(await ui.find({ key: 'keepalive' })).toMatchObject({ props: { label: 'Keep-alive on 0/12' } })
   await clock.advance(29 * 60_000)
   expect(seen.forks).toBe(0)
   seen.status = warm({ anchor_epoch: T0 / 1000 + 1800 })
   await clock.advance(61_000)
   expect(seen.forks).toBe(1)
   expect(seen.runs.at(-1)).toContain('--touch')
-  expect(await ui.find({ text: /keep-alive on 1\/12/ })).toBeDefined()
+  expect(await ui.find({ key: 'keepalive' })).toMatchObject({ props: { label: 'Keep-alive on 1/12' } })
 })
 
 test('keep-alive stops itself when a ping finds the cache cold', async ($, on) => {
@@ -179,7 +179,7 @@ test('keep-alive stops itself when a ping finds the cache cold', async ($, on) =
   seen.readTokens = 0
   await clock.advance(31 * 60_000)
   expect(seen.forks).toBe(1)
-  expect(await ui.find({ text: /keep-alive off/ })).toBeDefined()
+  expect(await ui.find({ key: 'keepalive' })).toMatchObject({ props: { label: 'Keep-alive off' } })
 })
 
 test('keep-alive stops at the ping limit', { options: { keepalive_max_pings: 2 } }, async ($, on) => {
@@ -192,7 +192,7 @@ test('keep-alive stops at the ping limit', { options: { keepalive_max_pings: 2 }
     await clock.advance(1800_000)
   }
   expect(seen.forks).toBe(2)
-  expect(await ui.find({ text: /keep-alive off/ })).toBeDefined()
+  expect(await ui.find({ key: 'keepalive' })).toMatchObject({ props: { label: 'Keep-alive off' } })
 })
 
 test('a model switch on a warm cache says how long switching back stays free', async ($, on) => {
@@ -235,8 +235,8 @@ test('a forked session shows the window it inherits before its first turn', asyn
     prompt_cache_likely_expired: true,
   })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await ui.find({ text: 'expired' })).toBeDefined()
-  expect(await ui.find({ text: /~150\.0k to re-cache/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Cache expired' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /~150\.0k to re-cache/ })).toBeDefined()
 })
 
 test('a switch on a cold, large cache still offers compact and clear', async ($, on) => {
@@ -269,7 +269,8 @@ test('while Claude works the band shows a placeholder and no controls', async ($
     expect(await ui.find({ type: 'Text', text: 'Available when Claude is done' })).toBeDefined()
     // Only a compaction is animated.
     expect(await ui.find({ type: 'Text', text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/ })).toBeUndefined()
-    expect(await ui.find({ text: 'in use' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Cache in use' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '1h tier · opus-5-5 · keep-alive off' })).toBeDefined()
     for (const key of ['compact', 'clear', 'keepalive']) expect(await ui.find({ key })).toBeUndefined()
     await $.turn.complete({ reason: 'aborted', answer: '', durationMs: 5, isAborted: true, turnId: 't1' })
     expect(await ui.find({ type: 'Text', text: 'Available when Claude is done' })).toBeUndefined()
@@ -285,7 +286,7 @@ test('a compaction shows its own placeholder and locks the buttons', async ($, o
   on('session.compact', async () => {
     const ui = seat.ui
     if (ui === undefined) throw new Error('not mounted')
-    during.push((await ui.find({ type: 'Text', text: 'Compacting the conversation…' })) !== undefined)
+    during.push((await ui.find({ type: 'Text', text: /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Compacting the conversation…$/ })) !== undefined)
     during.push((await ui.find({ key: 'compact' })) === undefined)
     return { messages: [{ role: 'user' as const, text: 'summary', toolUses: [] }] }
   })
@@ -295,7 +296,7 @@ test('a compaction shows its own placeholder and locks the buttons', async ($, o
   const summary = { role: 'user' as const, text: 'old', toolUses: [] }
   await $.session.compact({ trigger: 'manual', messages: [summary] })
   expect(during).toEqual([true, true])
-  expect(await ui.find({ type: 'Text', text: 'Compacting the conversation…' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Compacting the conversation…/ })).toBeUndefined()
 })
 
 test('Allow send anyway arms the guard for the next message', async ($, on) => {
@@ -345,10 +346,9 @@ test('an empty cache reads like every other state', async ($, on) => {
   await start($)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
-    expect(await ui.find({ type: 'Text', text: '○' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: 'cache' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: 'empty' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: 'fills with your next message' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '◷' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Cache empty' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'fills with your next message · opus-5-5 · keep-alive off' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /\?|warming/ })).toBeUndefined()
     await ui.unmount()
   }
@@ -360,7 +360,7 @@ test("another plugin's band is drawn under ours, not replaced", async ($, on) =>
   await start($)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
-    expect(await ui.find({ text: 'cache 1h' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Cache warm · 60m left' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'other plugin band' })).toBeDefined()
     // One rule between the two bands, never wider than the band: on a
     // terminal exactly its columns, on a desktop the surface's own rule.
