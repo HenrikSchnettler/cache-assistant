@@ -374,3 +374,16 @@ test("another plugin's band is drawn under ours, not replaced", async ($, on) =>
     await ui.unmount()
   }
 })
+
+test('no rule is drawn when nothing but the engine sits beneath the band', async ($, on) => {
+  const { seen } = host(on, warm())
+  seen.below = { type: 'engine', ref: 0 } as unknown as typeof seen.below
+  await start($)
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    expect(await ui.find({ type: 'Text', text: 'Cache warm · 60m left' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^─+$/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Markdown', text: '---' })).toBeUndefined()
+    await ui.unmount()
+  }
+})

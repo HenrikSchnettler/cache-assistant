@@ -244,6 +244,9 @@ const isEmptyBox = (tree: unknown): boolean => {
   if (tree === null || tree === undefined) return true
   if (typeof tree !== 'object') return false
   const node = tree as { type?: string; children?: unknown }
+  // With no plugin drawing beneath, next(e) is the engine's own empty band: an engine node in a session, an empty Box
+  // under `claude plugin test`.
+  if (node.type === 'engine') return true
   const children = Array.isArray(node.children) ? node.children : node.children === undefined ? [] : [node.children]
 
   return node.type === 'Box' && children.every(c => c === null || c === undefined || c === false || c === '')
