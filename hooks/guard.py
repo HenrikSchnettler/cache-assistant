@@ -9,8 +9,10 @@ the *currently active* cache tier, with "send again to confirm" semantics:
      first send and explain roughly how many tokens will be re-written to the
      cache from cold if it goes through anyway.
 
-  2. Model / effort-change guard: if the live model or reasoning-effort level
-     differs from the setting the last message was sent under — and the cache
+  2. Model / effort-change guard: if the model (reported by the model-switch
+     hooks, or read from settings.json) or the reasoning-effort level (read
+     from settings.json) differs from the setting the last message was sent
+     under — and the cache
      is still warm — block the first send, because that switch busts the whole
      cache. This lets the user revert to the previous model/effort without
      having destroyed the cache.
@@ -38,8 +40,6 @@ import cache_core  # noqa: E402
 KEEPALIVE_MARKER = cache_core.KEEPALIVE_MARKER
 # A pending block older than this (seconds) is ignored (stale).
 PENDING_TTL = 900
-# Sensor (model/effort) older than this falls back to settings.json.
-SENSOR_MAX_AGE = 30
 
 
 def _load_guard(session_id):
@@ -54,8 +54,9 @@ def _prompt_hash(prompt):
     return hashlib.sha1((prompt or "").encode("utf-8", "replace")).hexdigest()
 
 
-def _settings_json_selection():
-    """Fallback current model/effort from user settings.json."""
+def _current_selection():
+    """Current (model, effort) from user settings.json. A model switch made
+    only for this session reaches the guard through hooks/model_switch.py."""
     path = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
     try:
         with open(path) as fh:
@@ -63,18 +64,6 @@ def _settings_json_selection():
         return s.get("model"), s.get("effortLevel")
     except (OSError, ValueError):
         return None, None
-
-
-def _current_selection(session_id):
-    """Live (model, effort). Prefer the status-line sensor; fall back to settings."""
-    sensor = cache_core.read_settings_state(session_id)
-    if sensor and (time.time() - (sensor.get("updated_at") or 0)) <= SENSOR_MAX_AGE:
-        m = sensor.get("model_id")
-        e = sensor.get("effort_level")
-        if m:
-            return m, e, "sensor"
-    m, e = _settings_json_selection()
-    return m, e, "settings"
 
 
 def _allow(extra_context=None):
@@ -115,7 +104,7 @@ def main():
         _allow()
 
     guard = _load_guard(session_id)
-    model, effort, _src = _current_selection(session_id)
+    model, effort = _current_selection()
     cur_setting = {"model_id": model, "effort_level": effort}
 
     # --- Acknowledgement: the band's Allow send anyway, or (without the band) the

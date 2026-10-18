@@ -14,7 +14,15 @@ GUARD = os.path.join(PLUGIN, "hooks", "guard.py")
 # Both the in-process cache_core calls AND the guard subprocess must share the
 # same state dir (in real use they inherit Claude Code's identical environment).
 os.environ["CACHE_ASSISTANT_STATE_DIR"] = STATE
-env = dict(os.environ, CACHE_ASSISTANT_STATE_DIR=STATE)
+# The guard reads the current model/effort from ~/.claude/settings.json; point
+# HOME at a scratch dir so the tests control it.
+HOME = tempfile.mkdtemp(prefix="ca-guard-home-")
+os.makedirs(os.path.join(HOME, ".claude"))
+env = dict(os.environ, CACHE_ASSISTANT_STATE_DIR=STATE, HOME=HOME)
+
+def set_selection(model, effort):
+    with open(os.path.join(HOME, ".claude", "settings.json"), "w") as fh:
+        json.dump({"model": model, "effortLevel": effort}, fh)
 
 fails = []
 def check(name, cond, extra=""):
@@ -62,7 +70,7 @@ def reason(o): return o.get("reason","")
 print("\n-- Scenario A: expired cache --")
 sess="A"; tx=new_tx("A")
 append(tx, assistant(time.time()-4000, "1h"))   # anchor 4000s ago -> expired (ttl 3600)
-cache_core.write_settings_state(sess, "opus", "high")
+set_selection("opus", "high")
 o1 = run(sess, tx, "please refactor this")
 check("A1 first send BLOCKED on expiry", is_block(o1))
 check("A1 reason mentions EXPIRED", "EXPIRED" in reason(o1), reason(o1))
@@ -78,10 +86,10 @@ check("A3 after warm turn, normal send allowed", not is_block(o3), o3)
 print("\n-- Scenario B: model switch on warm cache --")
 sess="B"; tx=new_tx("B")
 append(tx, assistant(time.time(), "1h"))          # warm
-cache_core.write_settings_state(sess, "claude-opus-4-8", "high")
+set_selection("claude-opus-4-8", "high")
 o1 = run(sess, tx, "msg one")
 check("B1 first message allowed (no baseline yet)", not is_block(o1))
-cache_core.write_settings_state(sess, "claude-sonnet-5", "high")   # user switches model
+set_selection("claude-sonnet-5", "high")   # user switches model
 o2 = run(sess, tx, "msg two")
 check("B2 first msg under new model BLOCKED", is_block(o2))
 check("B2 reason names the model switch", "model" in reason(o2) and "→" in reason(o2), reason(o2))
@@ -94,12 +102,12 @@ check("B4 subsequent send under sonnet NOT re-blocked", not is_block(o4), o4)
 print("\n-- Scenario C: revert model before sending --")
 sess="C"; tx=new_tx("C")
 append(tx, assistant(time.time(), "1h"))
-cache_core.write_settings_state(sess, "claude-opus-4-8", "high")
+set_selection("claude-opus-4-8", "high")
 run(sess, tx, "establish baseline")               # commit opus/high
-cache_core.write_settings_state(sess, "claude-sonnet-5", "high")  # switch...
+set_selection("claude-sonnet-5", "high")  # switch...
 oblock = run(sess, tx, "risky send")
 check("C1 switch blocks", is_block(oblock))
-cache_core.write_settings_state(sess, "claude-opus-4-8", "high")  # ...revert before confirming
+set_selection("claude-opus-4-8", "high")  # ...revert before confirming
 orevert = run(sess, tx, "a different message after reverting")
 check("C2 after revert, send ALLOWED (cache intact)", not is_block(orevert), orevert)
 
@@ -107,9 +115,9 @@ check("C2 after revert, send ALLOWED (cache intact)", not is_block(orevert), ore
 print("\n-- Scenario D: effort switch on warm cache --")
 sess="D"; tx=new_tx("D")
 append(tx, assistant(time.time(), "1h"))
-cache_core.write_settings_state(sess, "claude-opus-4-8", "high")
+set_selection("claude-opus-4-8", "high")
 run(sess, tx, "baseline")
-cache_core.write_settings_state(sess, "claude-opus-4-8", "low")   # effort high->low
+set_selection("claude-opus-4-8", "low")   # effort high->low
 o = run(sess, tx, "after effort change")
 check("D1 effort change BLOCKED", is_block(o))
 check("D1 reason names effort", "effort" in reason(o), reason(o))
@@ -118,7 +126,7 @@ check("D1 reason names effort", "effort" in reason(o), reason(o))
 print("\n-- Scenario E: never-block cases --")
 sess="E"; tx=new_tx("E")
 append(tx, assistant(time.time()-4000, "1h"))     # expired, but...
-cache_core.write_settings_state(sess, "opus", "high")
+set_selection("opus", "high")
 check("E1 slash command allowed", not is_block(run(sess, tx, "/model sonnet")))
 sys.path.insert(0, os.path.join(PLUGIN, "hooks"))
 import guard as guardmod
@@ -129,7 +137,7 @@ check("E3 empty prompt allowed", not is_block(run(sess, tx, "   ")))
 print("\n-- Scenario F: compact after the window expired --")
 sess="F"; tx=new_tx("F")
 append(tx, assistant(time.time()-4000, "1h"))     # expired...
-cache_core.write_settings_state(sess, "opus", "high")
+set_selection("opus", "high")
 check("F0 expired before compact (blocks)", is_block(run(sess, tx, "before compact")))
 append(tx, compact_boundary(time.time()-10))      # ...then the user compacts
 o1 = run(sess, tx, "first message after compact")
@@ -157,9 +165,9 @@ check("G3 threshold 0 always blocks", is_block(run(sess, tx, "tiny")))
 del env["CLAUDE_PLUGIN_OPTION_BLOCK_THRESHOLD_TOKENS"]
 sess="G4"; tx=new_tx("G4")
 append(tx, assistant(time.time()-10, "1h", read=9000, create=3000))     # warm, small
-cache_core.write_settings_state(sess, "opus", "high")
+set_selection("opus", "high")
 run(sess, tx, "baseline")
-cache_core.write_settings_state(sess, "sonnet", "high")
+set_selection("sonnet", "high")
 check("G4 model change on a small warm cache NOT blocked",
       not is_block(run(sess, tx, "after switch")))
 
@@ -190,11 +198,11 @@ check("H4 SDK switch is not asked (nobody to ask)",
 # confirmed at the switch prompt -> the send guard does not ask again
 sess="H5"; tx=new_tx("H5")
 append(tx, assistant(time.time()-10, "1h"))
-cache_core.write_settings_state(sess, "opus", "high")
+set_selection("opus", "high")
 run(sess, tx, "baseline")
 switch(sess, "PreModelSwitch", "opus", "sonnet")
 switch(sess, "PostModelSwitch", "opus", "sonnet")
-cache_core.write_settings_state(sess, "sonnet", "high")
+set_selection("sonnet", "high")
 check("H5 confirmed switch: first send NOT blocked again",
       not is_block(run(sess, tx, "go on")))
 
@@ -241,5 +249,5 @@ check("I6 band hidden: first send BLOCKED", is_block(run(sess, tx, "hidden band"
 check("I7 band hidden: re-send is the acknowledgement again", not is_block(run(sess, tx, "hidden band")))
 
 print("\n%d failures" % len(fails))
-shutil.rmtree(STATE, ignore_errors=True); shutil.rmtree(WORK, ignore_errors=True)
+shutil.rmtree(STATE, ignore_errors=True); shutil.rmtree(WORK, ignore_errors=True); shutil.rmtree(HOME, ignore_errors=True)
 sys.exit(1 if fails else 0)
