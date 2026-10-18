@@ -34,12 +34,13 @@ re-write. Cache Assistant makes that window visible and gives you guardrails.
   cold re-write. Press **Allow send anyway** in the band to let the next message
   through (without the band: send the same message again). Only for re-writes at
   or above the threshold.
-- **Model / effort-change guard** — switching model or reasoning effort busts the
-  whole cache. The first message under the new setting is **blocked** so you can
-  revert without losing your warm cache. **Allow send anyway** in the band proceeds.
-  A model switch is reported by the model-switch hooks; an effort change is seen
-  only once it is saved to `~/.claude/settings.json` (a session-only `/effort`
-  change is not caught here, but the band reports the cache miss it causes).
+- **Model-switch guard** — switching model busts the whole cache. A switch
+  you could not confirm at the switch prompt **blocks** the first message under
+  the new model, so you can switch back without losing your warm cache. **Allow
+  send anyway** in the band proceeds. Only this session's own switch counts, as
+  reported by the model-switch hooks: a `/model` in another session never blocks
+  here. An effort change is not caught before the send, but the band reports the
+  cache miss it causes.
 - **Session-start notice** — when you **resume** a session whose window lapsed
   while you were away, a heads-up is **shown to you on entry** (with the same cold
   re-write estimate), so you know the first turn is cold before you type. A

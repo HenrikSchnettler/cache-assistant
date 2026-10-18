@@ -9,13 +9,17 @@ the *currently active* cache tier, with "send again to confirm" semantics:
      first send and explain roughly how many tokens will be re-written to the
      cache from cold if it goes through anyway.
 
-  2. Model / effort-change guard: if the model (reported by the model-switch
-     hooks, or read from settings.json) or the reasoning-effort level (read
-     from settings.json) differs from the setting the last message was sent
-     under — and the cache
-     is still warm — block the first send, because that switch busts the whole
-     cache. This lets the user revert to the previous model/effort without
-     having destroyed the cache.
+  2. Model-switch guard: if this session switched model since its last message
+     without confirming it at the switch prompt (recorded by
+     hooks/model_switch.py) — and the cache is still warm — block the first
+     send, because that switch busts the whole cache. This lets the user switch
+     back without having destroyed the cache.
+
+There is no other source for the model or effort: `~/.claude/settings.json` is
+shared by every session on the machine (a `/model` in one session persists
+there), so it cannot say what *this* session runs, and reading it made a switch
+in one session block a send in another. An effort change is reported after the
+fact, as a cache miss in the band.
 
 The acknowledgement is the band's "Allow send anyway" button (hooks/register.tsx),
 which records `ack` in the guard state: the next message goes through
@@ -52,18 +56,6 @@ def _save_guard(session_id, data):
 
 def _prompt_hash(prompt):
     return hashlib.sha1((prompt or "").encode("utf-8", "replace")).hexdigest()
-
-
-def _current_selection():
-    """Current (model, effort) from user settings.json. A model switch made
-    only for this session reaches the guard through hooks/model_switch.py."""
-    path = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
-    try:
-        with open(path) as fh:
-            s = json.load(fh)
-        return s.get("model"), s.get("effortLevel")
-    except (OSError, ValueError):
-        return None, None
 
 
 def _allow(extra_context=None):
@@ -104,8 +96,8 @@ def main():
         _allow()
 
     guard = _load_guard(session_id)
-    model, effort = _current_selection()
-    cur_setting = {"model_id": model, "effort_level": effort, "source": "settings"}
+    # The settings.json baseline of 0.3.x/0.4.0: nothing compares it any more.
+    guard.pop("committed", None)
 
     # --- Acknowledgement: the band's Allow send anyway, or (without the band) the
     # same prompt re-sent after a block -> let it through.
@@ -116,10 +108,10 @@ def main():
     is_resent = not has_band and pending and (now - pending.get("at", 0)) <= PENDING_TTL \
         and pending.get("prompt_hash") == _prompt_hash(prompt)
     if is_acked or is_resent:
-        # This send is the confirmation. Clear the block, commit current setting,
-        # and return to normal logic on subsequent sends.
+        # This send is the confirmation. Clear the block (and the switch it was
+        # about) and return to normal logic on subsequent sends.
         guard["pending"] = None
-        guard["committed"] = cur_setting
+        guard.pop("switch", None)
         _save_guard(session_id, guard)
         _allow()
 
@@ -132,17 +124,12 @@ def main():
     except Exception:
         state = {"have_data": False}
 
-    committed = guard.get("committed")
-    # A baseline from before 0.4.0 came from the status-line sensor (live model
-    # ids, not settings.json aliases); comparing it would block a non-change.
-    if committed and committed.get("source") != "settings":
-        committed = None
     cache_warm = state.get("have_data") and state.get("expired") is False
     rewrite = cache_core.fmt_tokens(state.get("rewrite_tokens"))
     # Below the threshold a cold re-write is cheap: never block, just send.
     large = cache_core.is_large(state.get("rewrite_tokens"))
 
-    # --- Guard 0: a model switch reported by the PreModelSwitch/PostModelSwitch
+    # --- Model-switch guard: a switch reported by the PreModelSwitch/PostModelSwitch
     # hooks (hooks/model_switch.py). This is the live source where it exists; a
     # switch the user already confirmed at the switch prompt is not asked again.
     switch = guard.pop("switch", None)
@@ -150,6 +137,8 @@ def main():
             and switch.get("warm"):
         guard["pending"] = {"reason": "model_switch",
                             "prompt_hash": _prompt_hash(prompt), "at": now}
+        # Kept until a send goes through: switching back clears it untouched.
+        guard["switch"] = switch
         _save_guard(session_id, guard)
         _block(
             "⚡ Cache Assistant: the model changed {} → {}. That busts the "
@@ -160,32 +149,7 @@ def main():
             "→ {}"
             .format(switch.get("from"), switch.get("to"), rewrite, _proceed(has_band)))
 
-    # --- Guard 1: model / effort change while the cache is still warm ---------
-    if committed and model and cache_warm and large:
-        # A switch the model-switch hooks reported was handled above.
-        changed_model = committed.get("model_id") != model and not switch
-        changed_effort = (committed.get("effort_level") or None) != (effort or None)
-        if changed_model or changed_effort:
-            what = []
-            if changed_model:
-                what.append("model {} → {}".format(
-                    committed.get("model_id"), model))
-            if changed_effort:
-                what.append("effort {} → {}".format(
-                    committed.get("effort_level") or "?", effort or "?"))
-            guard["pending"] = {"reason": "model_effort",
-                                "prompt_hash": _prompt_hash(prompt), "at": now}
-            _save_guard(session_id, guard)
-            _block(
-                "⚡ Cache Assistant: you changed {}. That busts the whole "
-                "prompt cache and forces ~{} tokens to be re-cached on this first "
-                "message under the new setting.\n\n"
-                "→ If this was a mistake, switch back to the previous "
-                "setting now and your warm cache is untouched.\n"
-                "→ {}"
-                .format(" and ".join(what), rewrite, _proceed(has_band)))
-
-    # --- Guard 2: expired cache window ---------------------------------------
+    # --- Expiry guard: expired cache window -----------------------------------
     if state.get("have_data") and state.get("expired") and large:
         tier = cache_core.TIER_LABEL.get(state.get("tier"), "?")
         guard["pending"] = {"reason": "expiry",
@@ -198,8 +162,7 @@ def main():
             "→ {}"
             .format(tier, rewrite, _proceed(has_band)))
 
-    # --- Normal path: allow and commit the current setting as the baseline ---
-    guard["committed"] = cur_setting
+    # --- Normal path: allow ---------------------------------------------------
     if guard.get("pending") is None and "pending" in guard:
         del guard["pending"]
     _save_guard(session_id, guard)

@@ -27,7 +27,7 @@ commands/cache-status.md
 tests/                         # test_core / test_guard / test_keepalive / test_session_notice / band.test.ts
 ```
 
-Run the tests with `python3 tests/test_*.py` (130 checks, no network, no deps)
+Run the tests with `python3 tests/test_*.py` (136 checks, no network, no deps)
 and `claude plugin test .` for the band.
 
 ## The cache model this is built on (ground truth)
@@ -54,10 +54,12 @@ Anthropic's docs. The code keys off exactly these facts:
   key) → the next turn is a full re-read. Critically, the `UserPromptSubmit` hook
   stdin does **not** include the pending model/effort, and the transcript's last
   turn still shows the *previous* model. So `guard.py` learns of a model switch
-  from the `PreModelSwitch`/`PostModelSwitch` hooks (`hooks/model_switch.py`) and
-  otherwise reads model and effort from `~/.claude/settings.json`. A session-only
-  effort change (not saved to settings) is therefore not caught before the send;
-  the band's unexpected-miss notice reports it after the turn. (The plugin used
+  from the `PreModelSwitch`/`PostModelSwitch` hooks (`hooks/model_switch.py`)
+  only. It **never reads `~/.claude/settings.json`**: every session shares that
+  file and a `/model` in any of them persists there, so reading it made a switch
+  in one session block a send in another. An effort change is therefore not
+  caught before the send; the band's unexpected-miss notice reports it after
+  the turn. (The plugin used
   to ship a status line whose stdin carried `model.id`/`effort.level` as a live
   sensor; it was removed with the band.) Docs confirm there is
   **no `$CLAUDE_MODEL` env var**, only `SessionStart` stdin carries `model` (not
@@ -100,9 +102,9 @@ Cold-rewrite token estimate (shown by the band and guards) =
   (`cache_status.py --allow-next`); the next message is allowed and the ack spent
   (not sticky). The mod records `band: true` at session start (`--band on`, off
   while hidden): only without the band is the identical re-send the
-  acknowledgement. The model/effort guard blocks only
-  while the current selection differs from the setting the last message was sent
-  under, so reverting before sending clears it with the cache intact. The guard
+  acknowledgement. The model-switch guard keeps the `switch` record until a send
+  goes through, so switching back before sending clears it with the cache
+  intact. The guard
   **never** blocks slash-commands, empty prompts, or keep-alive pings (marked with
   `cache_core.KEEPALIVE_MARKER`), and has a top-level safety net that **allows on
   any internal error** — it must never wrongly block a send.
@@ -152,7 +154,8 @@ Cold-rewrite token estimate (shown by the band and guards) =
   cache; Post records `switch` in `guard-<session>.json`. `guard.py` consumes it:
   confirmed at the prompt means no second block, unconfirmed (`sdk`, `auto`)
   blocks the first send once, and switching back to the original model clears
-  it. Effort, and models on older versions, come from `settings.json`.
+  it. Nothing else (effort, models on versions without these events) is
+  guarded before the send.
 - **The mod (`hooks/register.tsx`).** A function-hooks module drawing the
   `AbovePrompt` band. It does not re-derive the window: it runs
   `cache_status.py --json` at session start, after each main-loop turn, after a

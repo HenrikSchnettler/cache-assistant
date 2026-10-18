@@ -14,8 +14,9 @@ GUARD = os.path.join(PLUGIN, "hooks", "guard.py")
 # Both the in-process cache_core calls AND the guard subprocess must share the
 # same state dir (in real use they inherit Claude Code's identical environment).
 os.environ["CACHE_ASSISTANT_STATE_DIR"] = STATE
-# The guard reads the current model/effort from ~/.claude/settings.json; point
-# HOME at a scratch dir so the tests control it.
+# ~/.claude/settings.json is shared by every session (a /model in any of them
+# persists there): the guard must never read it. A HOME of its own lets the
+# tests write it as another session would.
 HOME = tempfile.mkdtemp(prefix="ca-guard-home-")
 os.makedirs(os.path.join(HOME, ".claude"))
 env = dict(os.environ, CACHE_ASSISTANT_STATE_DIR=STATE, HOME=HOME)
@@ -23,6 +24,15 @@ env = dict(os.environ, CACHE_ASSISTANT_STATE_DIR=STATE, HOME=HOME)
 def set_selection(model, effort):
     with open(os.path.join(HOME, ".claude", "settings.json"), "w") as fh:
         json.dump({"model": model, "effortLevel": effort}, fh)
+
+def switch_(session, event, src, dst, source="command", warm=True, tokens=120000):
+    payload = json.dumps({"session_id":session,"hook_event_name":event,
+        "from_model":src,"to_model":dst,"requested_model":dst,"source":source,
+        "context_tokens":tokens,"prompt_cache_warm":warm,"cache_ttl":"1h",
+        "estimated_cache_write_usd":1.2,"pricing":"catalog"})
+    r = subprocess.run([sys.executable, os.path.join(PLUGIN, "hooks", "model_switch.py")],
+                       input=payload, capture_output=True, text=True, env=env)
+    return json.loads(r.stdout) if r.stdout.strip() else {}
 
 fails = []
 def check(name, cond, extra=""):
@@ -70,7 +80,6 @@ def reason(o): return o.get("reason","")
 print("\n-- Scenario A: expired cache --")
 sess="A"; tx=new_tx("A")
 append(tx, assistant(time.time()-4000, "1h"))   # anchor 4000s ago -> expired (ttl 3600)
-set_selection("opus", "high")
 o1 = run(sess, tx, "please refactor this")
 check("A1 first send BLOCKED on expiry", is_block(o1))
 check("A1 reason mentions EXPIRED", "EXPIRED" in reason(o1), reason(o1))
@@ -82,14 +91,12 @@ append(tx, assistant(time.time(), "1h"))
 o3 = run(sess, tx, "next unrelated message")
 check("A3 after warm turn, normal send allowed", not is_block(o3), o3)
 
-# ============ Scenario B: model change guard ================================
+# ============ Scenario B: model switch on a warm cache ======================
 print("\n-- Scenario B: model switch on warm cache --")
 sess="B"; tx=new_tx("B")
 append(tx, assistant(time.time(), "1h"))          # warm
-set_selection("claude-opus-4-8", "high")
-o1 = run(sess, tx, "msg one")
-check("B1 first message allowed (no baseline yet)", not is_block(o1))
-set_selection("claude-sonnet-5", "high")   # user switches model
+check("B1 first message allowed", not is_block(run(sess, tx, "msg one")))
+switch_(sess, "PostModelSwitch", "claude-opus-4-8", "claude-sonnet-5", source="picker")
 o2 = run(sess, tx, "msg two")
 check("B2 first msg under new model BLOCKED", is_block(o2))
 check("B2 reason names the model switch", "model" in reason(o2) and "→" in reason(o2), reason(o2))
@@ -102,31 +109,29 @@ check("B4 subsequent send under sonnet NOT re-blocked", not is_block(o4), o4)
 print("\n-- Scenario C: revert model before sending --")
 sess="C"; tx=new_tx("C")
 append(tx, assistant(time.time(), "1h"))
-set_selection("claude-opus-4-8", "high")
-run(sess, tx, "establish baseline")               # commit opus/high
-set_selection("claude-sonnet-5", "high")  # switch...
-oblock = run(sess, tx, "risky send")
-check("C1 switch blocks", is_block(oblock))
-set_selection("claude-opus-4-8", "high")  # ...revert before confirming
+run(sess, tx, "establish baseline")
+switch_(sess, "PostModelSwitch", "claude-opus-4-8", "claude-sonnet-5", source="picker")
+check("C1 switch blocks", is_block(run(sess, tx, "risky send")))
+check("C1 a different message is still blocked", is_block(run(sess, tx, "another one")))
+switch_(sess, "PostModelSwitch", "claude-sonnet-5", "claude-opus-4-8", source="picker")
 orevert = run(sess, tx, "a different message after reverting")
 check("C2 after revert, send ALLOWED (cache intact)", not is_block(orevert), orevert)
 
-# ============ Scenario D: effort change guard ==============================
-print("\n-- Scenario D: effort switch on warm cache --")
+# ============ Scenario D: settings.json is never this session's selection ====
+print("\n-- Scenario D: settings.json changes --")
 sess="D"; tx=new_tx("D")
 append(tx, assistant(time.time(), "1h"))
 set_selection("claude-opus-4-8", "high")
 run(sess, tx, "baseline")
-set_selection("claude-opus-4-8", "low")   # effort high->low
-o = run(sess, tx, "after effort change")
-check("D1 effort change BLOCKED", is_block(o))
-check("D1 reason names effort", "effort" in reason(o), reason(o))
+set_selection("claude-sonnet-5", "high")
+check("D1 a model saved to settings.json does not block", not is_block(run(sess, tx, "next")))
+set_selection("claude-sonnet-5", "low")
+check("D2 an effort saved to settings.json does not block", not is_block(run(sess, tx, "and on")))
 
 # ============ Scenario E: bypasses =========================================
 print("\n-- Scenario E: never-block cases --")
 sess="E"; tx=new_tx("E")
 append(tx, assistant(time.time()-4000, "1h"))     # expired, but...
-set_selection("opus", "high")
 check("E1 slash command allowed", not is_block(run(sess, tx, "/model sonnet")))
 sys.path.insert(0, os.path.join(PLUGIN, "hooks"))
 import guard as guardmod
@@ -137,7 +142,6 @@ check("E3 empty prompt allowed", not is_block(run(sess, tx, "   ")))
 print("\n-- Scenario F: compact after the window expired --")
 sess="F"; tx=new_tx("F")
 append(tx, assistant(time.time()-4000, "1h"))     # expired...
-set_selection("opus", "high")
 check("F0 expired before compact (blocks)", is_block(run(sess, tx, "before compact")))
 append(tx, compact_boundary(time.time()-10))      # ...then the user compacts
 o1 = run(sess, tx, "first message after compact")
@@ -165,23 +169,14 @@ check("G3 threshold 0 always blocks", is_block(run(sess, tx, "tiny")))
 del env["CLAUDE_PLUGIN_OPTION_BLOCK_THRESHOLD_TOKENS"]
 sess="G4"; tx=new_tx("G4")
 append(tx, assistant(time.time()-10, "1h", read=9000, create=3000))     # warm, small
-set_selection("opus", "high")
 run(sess, tx, "baseline")
-set_selection("sonnet", "high")
+switch_(sess, "PostModelSwitch", "opus", "sonnet", source="picker", tokens=12000)
 check("G4 model change on a small warm cache NOT blocked",
       not is_block(run(sess, tx, "after switch")))
 
 # ============ Scenario H: PreModelSwitch / PostModelSwitch hook ==============
 print("\n-- Scenario H: model-switch hook --")
-SWITCH = os.path.join(PLUGIN, "hooks", "model_switch.py")
-def switch(session, event, src, dst, source="command", warm=True, tokens=120000):
-    payload = json.dumps({"session_id":session,"hook_event_name":event,
-        "from_model":src,"to_model":dst,"requested_model":dst,"source":source,
-        "context_tokens":tokens,"prompt_cache_warm":warm,"cache_ttl":"1h",
-        "estimated_cache_write_usd":1.2,"pricing":"catalog"})
-    r = subprocess.run([sys.executable, SWITCH], input=payload, capture_output=True,
-                       text=True, env=env)
-    return json.loads(r.stdout) if r.stdout.strip() else {}
+switch = switch_
 def decision(o): return (o.get("hookSpecificOutput") or {}).get("permissionDecision")
 
 o = switch("H", "PreModelSwitch", "opus", "sonnet")
@@ -198,11 +193,9 @@ check("H4 SDK switch is not asked (nobody to ask)",
 # confirmed at the switch prompt -> the send guard does not ask again
 sess="H5"; tx=new_tx("H5")
 append(tx, assistant(time.time()-10, "1h"))
-set_selection("opus", "high")
 run(sess, tx, "baseline")
 switch(sess, "PreModelSwitch", "opus", "sonnet")
 switch(sess, "PostModelSwitch", "opus", "sonnet")
-set_selection("sonnet", "high")
 check("H5 confirmed switch: first send NOT blocked again",
       not is_block(run(sess, tx, "go on")))
 
@@ -248,17 +241,35 @@ run(sess, tx, "spends the ack")
 check("I6 band hidden: first send BLOCKED", is_block(run(sess, tx, "hidden band")))
 check("I7 band hidden: re-send is the acknowledgement again", not is_block(run(sess, tx, "hidden band")))
 
-# ============ Scenario J: baseline left by the 0.3.x status-line sensor ======
-print("\n-- Scenario J: legacy sensor baseline --")
-sess="J"; tx=new_tx("J")
-append(tx, assistant(time.time()-10, "1h"))
-g = cache_core.load_guard(sess)
-g["committed"] = {"model_id": "claude-opus-4-8", "effort_level": "high"}
-cache_core.save_guard(sess, g)
-set_selection("opus", None)
-check("J1 legacy baseline does not block the first send", not is_block(run(sess, tx, "go on")))
-set_selection("sonnet", None)
-check("J2 the guard works again from the new baseline", is_block(run(sess, tx, "after switch")))
+# ============ Scenario J: a switch in one session never guards another ======
+print("\n-- Scenario J: one session's switch, another session's send --")
+set_selection("opus[1m]", "xhigh")
+desk="J-desktop"; dtx=new_tx("J-desktop")
+term="J-term"; ttx=new_tx("J-term")
+append(dtx, assistant(time.time()-10, "1h"))
+append(ttx, assistant(time.time()-10, "1h"))
+run(desk, dtx, "baseline"); run(term, ttx, "baseline")
+# /model sonnet in the terminal: asked and confirmed there, persisted to settings.json.
+switch(term, "PreModelSwitch", "claude-opus-5-5", "claude-sonnet-5-5")
+switch(term, "PostModelSwitch", "claude-opus-5-5", "claude-sonnet-5-5")
+set_selection("sonnet", "xhigh")
+o = run(desk, dtx, "carry on")
+check("J1 desktop session NOT blocked by the terminal's model switch", not is_block(o), o)
+check("J2 the desktop's guard state holds nothing of it",
+      not ({"switch", "committed", "pending"} & set(cache_core.load_guard(desk))), cache_core.load_guard(desk))
+check("J3 the terminal's confirmed switch is not asked again", not is_block(run(term, ttx, "next")))
+switch(desk, "PostModelSwitch", "claude-opus-5-5", "claude-haiku-5-5", source="picker")
+check("J4 the desktop's own picker switch is still caught", is_block(run(desk, dtx, "go")))
+check("J5 ...and only there", not is_block(run(term, ttx, "and on")))
+# A settings.json baseline left by 0.4.0 is dropped, never compared.
+leg="J-legacy"; ltx=new_tx("J-legacy")
+append(ltx, assistant(time.time()-10, "1h"))
+g = cache_core.load_guard(leg)
+g["committed"] = {"model_id": "opus", "effort_level": "high", "source": "settings"}
+cache_core.save_guard(leg, g)
+set_selection("sonnet", "low")
+check("J6 a legacy baseline does not block", not is_block(run(leg, ltx, "go on")))
+check("J6 ...and is removed", "committed" not in cache_core.load_guard(leg))
 
 print("\n%d failures" % len(fails))
 shutil.rmtree(STATE, ignore_errors=True); shutil.rmtree(WORK, ignore_errors=True); shutil.rmtree(HOME, ignore_errors=True)
