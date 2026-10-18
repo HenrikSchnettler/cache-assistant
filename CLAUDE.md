@@ -27,7 +27,7 @@ commands/cache-status.md
 tests/                         # test_core / test_guard / test_keepalive / test_session_notice / band.test.ts
 ```
 
-Run the tests with `python3 tests/test_*.py` (128 checks, no network, no deps)
+Run the tests with `python3 tests/test_*.py` (130 checks, no network, no deps)
 and `claude plugin test .` for the band.
 
 ## The cache model this is built on (ground truth)

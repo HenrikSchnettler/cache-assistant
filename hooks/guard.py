@@ -105,7 +105,7 @@ def main():
 
     guard = _load_guard(session_id)
     model, effort = _current_selection()
-    cur_setting = {"model_id": model, "effort_level": effort}
+    cur_setting = {"model_id": model, "effort_level": effort, "source": "settings"}
 
     # --- Acknowledgement: the band's Allow send anyway, or (without the band) the
     # same prompt re-sent after a block -> let it through.
@@ -133,6 +133,10 @@ def main():
         state = {"have_data": False}
 
     committed = guard.get("committed")
+    # A baseline from before 0.4.0 came from the status-line sensor (live model
+    # ids, not settings.json aliases); comparing it would block a non-change.
+    if committed and committed.get("source") != "settings":
+        committed = None
     cache_warm = state.get("have_data") and state.get("expired") is False
     rewrite = cache_core.fmt_tokens(state.get("rewrite_tokens"))
     # Below the threshold a cold re-write is cheap: never block, just send.

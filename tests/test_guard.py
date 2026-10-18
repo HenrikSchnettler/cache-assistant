@@ -248,6 +248,18 @@ run(sess, tx, "spends the ack")
 check("I6 band hidden: first send BLOCKED", is_block(run(sess, tx, "hidden band")))
 check("I7 band hidden: re-send is the acknowledgement again", not is_block(run(sess, tx, "hidden band")))
 
+# ============ Scenario J: baseline left by the 0.3.x status-line sensor ======
+print("\n-- Scenario J: legacy sensor baseline --")
+sess="J"; tx=new_tx("J")
+append(tx, assistant(time.time()-10, "1h"))
+g = cache_core.load_guard(sess)
+g["committed"] = {"model_id": "claude-opus-4-8", "effort_level": "high"}
+cache_core.save_guard(sess, g)
+set_selection("opus", None)
+check("J1 legacy baseline does not block the first send", not is_block(run(sess, tx, "go on")))
+set_selection("sonnet", None)
+check("J2 the guard works again from the new baseline", is_block(run(sess, tx, "after switch")))
+
 print("\n%d failures" % len(fails))
 shutil.rmtree(STATE, ignore_errors=True); shutil.rmtree(WORK, ignore_errors=True); shutil.rmtree(HOME, ignore_errors=True)
 sys.exit(1 if fails else 0)
