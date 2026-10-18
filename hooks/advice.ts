@@ -147,12 +147,12 @@ const adviseCache = (input: AdviceInput): Advice | null => {
     }
   }
 
-  // A model or effort change the guard caught (one no switch event announced).
+  // A model switch the guard caught (`model_effort`: a block left by 0.4.0).
   if (gate.blocked === 'model_effort' || gate.blocked === 'model_switch') {
     return {
       tone: 'warn',
       actions: ['send'],
-      text: `You changed the model or effort, which re-caches ${size} from cold. Switch back and the cache is untouched.`,
+      text: `You changed the model, which re-caches ${size} from cold. Switch back and the cache is untouched.`,
     }
   }
 

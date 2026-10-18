@@ -36,7 +36,7 @@ export type Notice =
 export type Gate = {
   /** Allow send anyway was pressed: the guard lets the next message through. */
   isArmed: boolean
-  /** Why the guard blocked the last send (`expiry`, `model_switch`, `model_effort`). */
+  /** Why the guard blocked the last send (`expiry`, `model_switch`; `model_effort` from 0.4.0). */
   blocked: string | null
 }
 
