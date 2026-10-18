@@ -152,7 +152,7 @@ const adviseCache = (input: AdviceInput): Advice | null => {
     return {
       tone: 'warn',
       actions: ['send'],
-      text: `You changed the model, which re-caches ${size} from cold. Switch back and the cache is untouched.`,
+      text: `You changed the ${gate.blocked === 'model_switch' ? 'model' : 'model or effort'}, which re-caches ${size} from cold. Switch back and the cache is untouched.`,
     }
   }
 

@@ -329,6 +329,17 @@ test('a model switch the guard blocked offers Allow send anyway', async ($, on) 
   expect(await ui.find({ key: 'send' })).toBeDefined()
 })
 
+test('a block left by 0.4.0 keeps naming the effort it may have been about', async ($, on) => {
+  const { seen } = host(on, warm())
+  on('prompt.submit', (_$, e) => ({ text: e.text }))
+  await start($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  seen.status = warm({ blocked: 'model_effort' })
+  await $.prompt.submit({ text: 'go on', wait: false, origin: { kind: 'composer' } })
+  expect(await ui.find({ type: 'Text', text: /You changed the model or effort/ })).toBeDefined()
+  expect(await ui.find({ key: 'send' })).toBeDefined()
+})
+
 test('the hidden band hands the acknowledgement back to a re-send', async ($, on) => {
   const { seen } = host(on, warm())
   await start($)
