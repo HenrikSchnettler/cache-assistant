@@ -1,8 +1,8 @@
 // Cache Assistant — the band above the prompt.
 //
-// Shows what the status line shows (tier, countdown, cold re-write size) plus
+// Shows the cache tier, countdown and cold re-write size, plus
 // advice on what to do next and a keep-alive switch. The cache window itself
-// still comes from lib/cache_core.py (via statusline/cache_status.py --json),
+// still comes from lib/cache_core.py (via scripts/cache_status.py --json),
 // read once per turn and on the events that move it; the countdown between
 // reads is plain arithmetic on the anchor, so nothing runs per second but a
 // string compare.
@@ -99,7 +99,7 @@ const refresh = async ($: EngineInterface, ...flags: string[]): Promise<CacheVie
   const id = await $.session.id()
   const known = await read($, session)
   const transcript = known?.id === id ? known.transcript : null
-  const argv = ['python3', `${$.plugin.root}/statusline/cache_status.py`, '--json', '--session', id]
+  const argv = ['python3', `${$.plugin.root}/scripts/cache_status.py`, '--json', '--session', id]
   if (transcript) argv.push('--transcript', transcript)
   argv.push(...flags)
 

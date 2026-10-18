@@ -58,7 +58,7 @@ up-to-10% "fire late" jitter still lands before the TTL):
    /loop 30m [cache-assistant:keepalive] cache keepalive ping — reply with the single word "pong" and do nothing else.
    ```
 
-   Each tick the model just replies `pong`; you can watch the status-line
+   Each tick the model just replies `pong`; you can watch the band's
    countdown jump back to full after every ping.
 
 ## Stopping
@@ -80,7 +80,7 @@ re-write when you return.
   chosen once, at start. If your plan tips into usage overage the tier drops
   1h → 5m (the window shrinks 3600s → 300s), and a 30-minute ping would then land
   long after each 5-minute window has already closed — paying a cold re-write
-  every time, worse than not looping at all. If the status line shows the tier
+  every time, worse than not looping at all. If the band shows the tier
   has dropped to **5m**, stop the loop and re-run this skill to re-pick the
   interval (or just let the cache expire — 5m-tier looping is near break-even).
 - **Pings append short turns to the transcript.** This is intended for a session

@@ -5,7 +5,7 @@ Project context for working in this repo. The repo root **is** the plugin
 `cache-assistant`; hooks resolve scripts via `${CLAUDE_PLUGIN_ROOT}` (the repo
 root).
 
-The plugin makes a session's prompt-cache window visible (status line) and
+The plugin makes a session's prompt-cache window visible (the band above the prompt) and
 enforceable (guards + keep-alive). Everything derives from the session `.jsonl`
 transcript; there are **no runtime dependencies** — stdlib Python 3 only.
 
@@ -14,8 +14,7 @@ transcript; there are **no runtime dependencies** — stdlib Python 3 only.
 ```
 .claude-plugin/plugin.json     # plugin manifest
 lib/cache_core.py              # THE engine — shared by everything below
-statusline/statusline.py       # status line row (tier + countdown); writes the model/effort sensor
-statusline/cache_status.py     # /cache-status backing script
+scripts/cache_status.py        # /cache-status and the band's backing script (--json, --touch, --allow-next, --band)
 hooks/guard.py                 # UserPromptSubmit guard (expiry + model/effort); can block a send
 hooks/session_notice.py        # SessionStart notice: same expiry logic, warns the USER on resume (stderr+exit 2, never blocks)
 hooks/model_switch.py          # PreModelSwitch (ask on a warm, large cache) / PostModelSwitch (record for guard.py)
@@ -23,13 +22,13 @@ hooks/register.tsx             # the mod: band above the prompt (function hooks 
 hooks/advice.ts                # the band's formatting + advice, pure functions
 hooks/hooks.json               # registers the command hooks and the module ("modules")
 types/index.d.ts               # the mod's $.state contract
-skills/install-statusline/     # install_statusline.py — non-destructive status line merge
 skills/keep-cache-alive/       # keepalive.py — tier→`/loop` planner (skill drives the built-in /loop)
 commands/cache-status.md
-tests/                         # test_core / test_guard / test_installer / test_keepalive / test_session_notice
+tests/                         # test_core / test_guard / test_keepalive / test_session_notice / band.test.ts
 ```
 
-Run the tests with `python3 tests/test_*.py` (104 checks, no network, no deps).
+Run the tests with `python3 tests/test_*.py` (130 checks, no network, no deps)
+and `claude plugin test .` for the band.
 
 ## The cache model this is built on (ground truth)
 
@@ -54,23 +53,20 @@ Anthropic's docs. The code keys off exactly these facts:
 - **Model or effort changes bust the whole cache** (each is part of the cache
   key) → the next turn is a full re-read. Critically, the `UserPromptSubmit` hook
   stdin does **not** include the pending model/effort, and the transcript's last
-  turn still shows the *previous* model. The only live source is the **status
-  line** stdin (`model.id`, `effort.level`) — which is why `statusline.py` writes
-  those to a per-session sensor file that `guard.py` reads (fallback:
-  `settings.json`). The model/effort guard therefore needs the status line
-  installed to be fully effective. Docs confirm this is irreducible: there is
+  turn still shows the *previous* model. So `guard.py` learns of a model switch
+  from the `PreModelSwitch`/`PostModelSwitch` hooks (`hooks/model_switch.py`) and
+  otherwise reads model and effort from `~/.claude/settings.json`. A session-only
+  effort change (not saved to settings) is therefore not caught before the send;
+  the band's unexpected-miss notice reports it after the turn. (The plugin used
+  to ship a status line whose stdin carried `model.id`/`effort.level` as a live
+  sensor; it was removed with the band.) Docs confirm there is
   **no `$CLAUDE_MODEL` env var**, only `SessionStart` stdin carries `model` (not
   guaranteed), and `effort`/`$CLAUDE_EFFORT` appear only on tool-context events
   (`PreToolUse`/`PostToolUse`/`Stop`/`SubagentStop`) — never on `UserPromptSubmit`.
 - **Surface support.** Hooks run in the terminal CLI and in **desktop local
-  sessions**, so the expiry guard and the SessionStart notice (both
-  transcript-only) work on both. But the **desktop app does not execute custom
-  status lines** (the `statusLine` setting is silently ignored — Claude Code issue
-  [#41456](https://github.com/anthropics/claude-code/issues/41456)), so on desktop
-  the sensor is never written and the model/effort guard **degrades to its
-  `settings.json` fallback**: it still catches a *persisted* change (`/model`
-  saved as default) but not a session-only picker switch. Cloud/remote/WSL
-  sessions don't load plugins at all.
+  sessions**, so the guards and the SessionStart notice work on both, and the
+  band renders in the desktop app's Code tab. Cloud/remote/WSL sessions don't
+  load plugins at all.
 - **Compaction resets the anchor.** `/compact` and auto-compact append a
   `{"type":"system","subtype":"compact_boundary"}` line (then a user line with
   `isCompactSummary: true`; either one resets); the summarisation
@@ -82,7 +78,7 @@ Anthropic's docs. The code keys off exactly these facts:
 - Multiple assistant `.jsonl` lines can share one `requestId` with **identical**
   usage (content blocks of one API response) — take the latest, never sum.
 
-Cold-rewrite token estimate (shown by the status line and guards) =
+Cold-rewrite token estimate (shown by the band and guards) =
 `cache_read + cache_creation + input_tokens` of the newest request.
 
 ## Key design decisions / conventions
@@ -93,10 +89,10 @@ Cold-rewrite token estimate (shown by the status line and guards) =
   the countdown from `now`. If the file grew it seeks to the last consumed byte
   offset and parses **only the appended lines** ("incremental"). A tier change is
   always an appended line, so it's caught by the incremental path and can never be
-  stale — never a full re-parse in steady state. Measured ~36 ms/tick (dominated
+  stale — never a full re-parse in steady state. Measured ~36 ms/call (dominated
   by Python interpreter startup), size-independent, ~11 MB RSS.
 - **State dir:** `CACHE_ASSISTANT_STATE_DIR` env override, else
-  `$TMPDIR/cache-assistant`. Holds `state-<session>.json` (cache memo + sensor)
+  `$TMPDIR/cache-assistant`. Holds `state-<session>.json` (cache memo + keep-alive touch)
   and `guard-<session>.json` (guard baseline + pending-ack). Writes are atomic
   (`os.replace`) and self-correcting, so a lost write just means a re-parse.
 - **Guard semantics.** A block records `{reason, prompt_hash}`; the band shows
@@ -140,11 +136,8 @@ Cold-rewrite token estimate (shown by the status line and guards) =
   alive, and it can't adapt if the tier drops mid-session (both caveated in the
   SKILL). The planner surfaces the community break-even (~a dozen pings ≈ one
   cold re-write) as guidance rather than a hard cap.
-- **Paths.** Hooks reference scripts via `${CLAUDE_PLUGIN_ROOT}`. The installer
-  bakes an absolute path to `statusline.py` into settings and sets
-  `refreshInterval: 1` (needed for the 1-second countdown); when a status line
-  already exists it generates a wrapper that runs the original first, then our
-  row, and saves the original for `--restore`. Re-running is idempotent.
+- **Paths.** Hooks reference scripts via `${CLAUDE_PLUGIN_ROOT}`, the mod via
+  `$.plugin.root`.
 
 - **Threshold (`cache_core.block_threshold` / `is_large`).** One value decides
   "small vs large" everywhere: the `block_threshold_tokens` plugin option
@@ -154,12 +147,12 @@ Cold-rewrite token estimate (shown by the status line and guards) =
   counts as large.
 - **Model switches (`hooks/model_switch.py`).** Claude Code >= 2.1.288 raises
   `PreModelSwitch`/`PostModelSwitch` with `prompt_cache_warm`, `context_tokens`
-  and `cache_ttl`: the live signal the status-line sensor only approximated.
+  and `cache_ttl`.
   Pre answers `ask` for a hand-made switch (`command`/`picker`) on a warm, large
   cache; Post records `switch` in `guard-<session>.json`. `guard.py` consumes it:
   confirmed at the prompt means no second block, unconfirmed (`sdk`, `auto`)
   blocks the first send once, and switching back to the original model clears
-  it. The sensor path remains for effort and for older versions.
+  it. Effort, and models on older versions, come from `settings.json`.
 - **The mod (`hooks/register.tsx`).** A function-hooks module drawing the
   `AbovePrompt` band. It does not re-derive the window: it runs
   `cache_status.py --json` at session start, after each main-loop turn, after a
@@ -171,7 +164,7 @@ Cold-rewrite token estimate (shown by the status line and guards) =
   the cache and the window slides, with no turn added. Such a hit leaves no
   transcript line, so the mod records it with `cache_status.py --touch`
   (`cache_core.record_touch`), which `get_cache_state` honours as the anchor when
-  newer; that keeps the guards and the status line in step.
+  newer; that keeps the guards in step.
 - **Unexpected miss (`_scan_assistant_line`).** A new request inside the open
   window that read under half of the prefix the previous one left cached is
   recorded as `miss` (with `model_changed`). The band reports it after the turn
@@ -183,5 +176,5 @@ Cold-rewrite token estimate (shown by the status line and guards) =
 
 - https://platform.claude.com/docs/en/build-with-claude/prompt-caching
 - https://code.claude.com/docs/en/prompt-caching
-- https://code.claude.com/docs/en/statusline · https://code.claude.com/docs/en/hooks
+- https://code.claude.com/docs/en/hooks
 - Keep-alive prior art: github.com/yujiachen-y/claude-code-cache-keepalive

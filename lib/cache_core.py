@@ -3,8 +3,8 @@
 Cache Assistant — core engine.
 
 Derives the *current* prompt-cache state of a Claude Code session from its
-`.jsonl` transcript, efficiently enough to be called once per second by a
-status line without ever re-parsing the whole file.
+`.jsonl` transcript, efficiently enough to be called on every send and every
+turn without ever re-parsing the whole file.
 
 Ground truth (see RESEARCH.md):
   * Cache tier is recorded per assistant turn in
@@ -173,7 +173,7 @@ def _scan_assistant_line(obj, acc):
     them is still caught). Everything before it is replaced by a summary,
     so the old cached prefix (and its expiry) no longer describes what the next
     request will send. The anchor is reset: until the next cache-touching turn
-    there is "no data" (status line shows warming, guards stay quiet), instead
+    there is "no data" (the band shows warming, guards stay quiet), instead
     of a stale EXPIRED from the pre-compact window.
     """
     if (obj.get("type") == "system" and obj.get("subtype") == "compact_boundary") \
@@ -317,7 +317,7 @@ def get_cache_state(transcript_path, session_id, now=None):
             # else: only a partial line so far; keep prior acc + offset.
         except OSError:
             return result
-        # Persist the refreshed memo (preserving the settings sensor block).
+        # Persist the refreshed memo (preserving the rest of the state file).
         new_cache = dict(acc)
         new_cache.update({
             "path_key": transcript_path,
@@ -396,30 +396,6 @@ def set_band(session_id, is_shown):
     guard = load_guard(session_id)
     guard["band"] = bool(is_shown)
     save_guard(session_id, guard)
-
-
-# --- settings sensor (model / effort), written by the status line ----------
-
-def write_settings_state(session_id, model_id, effort_level, now=None):
-    """Record the live model + effort so the guard hook can read them.
-
-    The status line receives model.id and effort.level on stdin (the live
-    session values, including mid-session /model and /effort changes) and calls
-    this every render, so the file trails the true selection by <= refreshInterval.
-    """
-    if now is None:
-        now = time.time()
-    full = _load_state(session_id)
-    full["settings"] = {
-        "model_id": model_id,
-        "effort_level": effort_level,
-        "updated_at": now,
-    }
-    _save_state(session_id, full)
-
-
-def read_settings_state(session_id):
-    return (_load_state(session_id).get("settings")) or {}
 
 
 def _projects_dir():
