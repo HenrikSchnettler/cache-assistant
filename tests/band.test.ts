@@ -340,6 +340,50 @@ test('a block left by 0.4.0 keeps naming the effort it may have been about', asy
   expect(await ui.find({ key: 'send' })).toBeDefined()
 })
 
+test('Allow send anyway puts the blocked message back in an empty prompt box', async ($, on) => {
+  const { seen } = host(on, warm())
+  const box = { text: '', cursor: 0 }
+  const fills: string[] = []
+  on('prompt.read', () => ({ value: { ...box } }))
+  on('prompt.fill', (_$, e) => {
+    fills.push(e.text)
+    return { isFilled: true }
+  })
+  on('prompt.submit', (_$, e) => (seen.status.blocked ? { drop: 'blocked by the guard' } : { text: e.text }))
+  await start($)
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    seen.status = warm({ blocked: 'model_switch' })
+    await $.prompt.submit({ text: 'refactor the parser', wait: false, origin: { kind: 'composer' } })
+    seen.status = warm({ armed: true })
+    await ui.press({ key: 'send' })
+    expect(seen.runs.at(-1)).toContain('--allow-next')
+    expect(fills).toEqual(['refactor the parser'])
+    fills.length = 0
+    await ui.unmount()
+  }
+
+  // Typed something else meanwhile: the draft stays as it is.
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  seen.status = warm({ blocked: 'model_switch' })
+  await $.prompt.submit({ text: 'refactor the parser', wait: false, origin: { kind: 'composer' } })
+  box.text = 'actually, first the tests'
+  seen.status = warm({ armed: true })
+  await ui.press({ key: 'send' })
+  expect(fills).toEqual([])
+
+  // A message that went through leaves nothing to put back.
+  box.text = ''
+  seen.status = warm({ blocked: 'model_switch' })
+  await $.prompt.submit({ text: 'refactor the parser', wait: false, origin: { kind: 'composer' } })
+  seen.status = warm()
+  await $.prompt.submit({ text: 'something else', wait: false, origin: { kind: 'composer' } })
+  seen.status = warm({ blocked: 'model_switch' })
+  await $.classic.Stop({ stop_hook_active: false })
+  await ui.press({ key: 'send' })
+  expect(fills).toEqual([])
+})
+
 test('the hidden band hands the acknowledgement back to a re-send', async ($, on) => {
   const { seen } = host(on, warm())
   await start($)

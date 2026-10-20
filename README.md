@@ -32,8 +32,9 @@ re-write. Cache Assistant makes that window visible and gives you guardrails.
 - **Cache-expiry guard** — before a send, if the window has already expired, the
   first attempt is **blocked** with an explanation and a token estimate for the
   cold re-write. Press **Allow send anyway** in the band to let the next message
-  through (without the band: send the same message again). Only for re-writes at
-  or above the threshold.
+  through: the blocked message goes back into the empty prompt box, so Enter
+  sends it (without the band: send the same message again). Only for re-writes
+  at or above the threshold.
 - **Model-switch guard** — switching model busts the whole cache. A switch
   you could not confirm at the switch prompt **blocks** the first message under
   the new model, so you can switch back without losing your warm cache. **Allow
