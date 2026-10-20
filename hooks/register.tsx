@@ -76,6 +76,9 @@ let isPinging = false
 let missSeenMs = 0
 // Settings changed since the last turn: the suspects for a cache miss.
 let changed: string[] = []
+// The message the guard last blocked, held in memory only: Allow send anyway
+// puts it back in the prompt box, so sending it is one Enter.
+let blockedText: string | null = null
 
 // What the session is busy with: the band draws a placeholder in place of its
 // controls, so nothing can be pressed that would collide. Only a compaction,
@@ -185,6 +188,17 @@ const toggleKeepAlive = async ($: EngineInterface): Promise<string> => {
   return `Cache keep-alive is on: a ping every ${fmtLeft(view.pingMs)}, at most ${maxPings}.`
 }
 
+// The blocked message back in the prompt box, unless the person has started
+// another one there: what they typed since is never overwritten.
+const refill = async ($: EngineInterface) => {
+  const text = blockedText
+  blockedText = null
+  if (text === null) return
+  const box = await $.prompt.read()
+  if (box.text.trim() !== '') return
+  await $.prompt.fill({ text })
+}
+
 // The band's cures for a cold, large cache: /compact and /clear as if typed,
 // queued until the session is idle (a direct compaction is refused while the
 // engine still counts a turn, as after an interrupted one). Our own hooks do
@@ -193,6 +207,7 @@ const cure = async ($: EngineInterface, action: Action) => {
   if ((await read($, busy)) !== null) return
   if (action === 'send') {
     await refresh($, '--allow-next')
+    await refill($)
     return
   }
   await setBusy($, action === 'compact' ? 'compacting' : 'clearing')
@@ -297,10 +312,13 @@ export const register: Register = (on, options) => {
     return { text: hidden ? 'Cache Assistant band hidden.' : 'Cache Assistant band shown.' }
   })
 
-  // A send the guard blocked starts no turn: read the block for the band.
+  // A send the guard blocked starts no turn: read the block for the band, and
+  // keep the message for Allow send anyway to put back.
   on('prompt.submit', async ($, e, next) => {
     const submitted = await next(e)
     await refresh($)
+    if (submitted.drop === undefined) blockedText = null
+    else if ((await read($, gate)).blocked !== null) blockedText = e.text
 
     return submitted
   })
@@ -353,6 +371,7 @@ export const register: Register = (on, options) => {
       await update($, cache, () => null)
       await update($, notice, () => null)
       await update($, keepAlive, () => ({ isOn: false, pings: 0 }))
+      blockedText = null
     }
 
     return next(e)

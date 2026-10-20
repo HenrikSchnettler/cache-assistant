@@ -100,7 +100,9 @@ Cold-rewrite token estimate (shown by the band and guards) =
 - **Guard semantics.** A block records `{reason, prompt_hash}`; the band shows
   it with a **Allow send anyway** button, which records `ack` in the guard state
   (`cache_status.py --allow-next`); the next message is allowed and the ack spent
-  (not sticky). The mod records `band: true` at session start (`--band on`, off
+  (not sticky). The mod keeps the blocked message's text in memory (never on
+  disk) and the button puts it back with `$.prompt.fill` when the prompt box is
+  empty, so one Enter sends it. The mod records `band: true` at session start (`--band on`, off
   while hidden): only without the band is the identical re-send the
   acknowledgement. The model-switch guard keeps the `switch` record until a send
   goes through, so switching back before sending clears it with the cache
