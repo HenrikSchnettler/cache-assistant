@@ -79,7 +79,7 @@ test('a warm window shows tier, countdown and size, and no advice', async ($, on
   await start($)
   for (const surface of SURFACES) {
     const ui = await $.ui.mount({ ...BAND, surface })
-    expect(await ui.find({ key: 'divider' })).toBeUndefined()
+    expect(await ui.find({ key: 'cache-assistant-divider' })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: /^─+$/ })).toBeUndefined()
     expect(await ui.find({ type: 'Text', text: '◷' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'Cache warm · 60m left' })).toBeDefined()
@@ -441,4 +441,16 @@ test('no rule is drawn when nothing but the engine sits beneath the band', async
     expect(await ui.find({ type: 'Markdown', text: '---' })).toBeUndefined()
     await ui.unmount()
   }
+})
+
+test('our rule keeps its own key over a band beneath that has a rule keyed divider', async ($, on) => {
+  const { seen } = host(on, warm())
+  // A desktop refuses a tree that holds a key twice, and draws its own band instead.
+  const rule = { type: 'Markdown', props: { key: 'divider', text: '---' } }
+  seen.below = { type: 'Box', props: { flexDirection: 'column' }, children: [{ type: 'Text', children: ['band one'] }, rule, { type: 'Text', children: ['band two'] }] } as RenderElement
+  await start($)
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: 'Cache warm · 60m left' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'band two' })).toBeDefined()
+  expect(await ui.findAll({ type: 'Markdown', text: '---' })).toHaveLength(2)
 })
