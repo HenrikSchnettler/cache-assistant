@@ -540,13 +540,15 @@ export const register: Register = (on, options) => {
     // a terminal it is exactly the band's columns, so it neither wraps nor is
     // cut with an ellipsis; a desktop band is narrower than its columns and
     // draws in proportional type, so it gets the surface's own rule instead.
+    // Every band draws into one tree, and a desktop refuses a key drawn twice:
+    // the rule's key carries the plugin's name.
     return (
       <Box flexDirection="column">
         {ours}
         {isRoomy ? (
-          <Markdown key="divider" text="---" dimColor />
+          <Markdown key="cache-assistant-divider" text="---" dimColor />
         ) : (
-          <Text key="divider" dimColor wrap="truncate">
+          <Text key="cache-assistant-divider" dimColor wrap="truncate">
             {'─'.repeat(e.props.bodyColumns)}
           </Text>
         )}
